@@ -1,0 +1,7 @@
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.cmd text eol=crlf
+chrono/resources/kernel.asm -text -whitespace
+chrono/resources/frametable.asm -text -whitespace
+chrono/resources/kernel.bin binary
