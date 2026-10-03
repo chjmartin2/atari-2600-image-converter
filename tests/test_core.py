@@ -51,7 +51,7 @@ class ConversionTests(unittest.TestCase):
             with self.assertRaises(ValueError):Settings.load(path)
 
     def test_improved_search_valid_deterministic_and_improves_start(self):
-        im=Image.new('RGB',(48,128),(100,150,190));s=Settings()
+        im=Image.new('RGB',(48,128),(100,150,190));s=Settings(search='Improved weighted')
         codes,score=optimize(im,s)
         self.assertEqual(optimize(im,s)[0],codes)
         self.assertTrue(all(c in CODES for c in codes))

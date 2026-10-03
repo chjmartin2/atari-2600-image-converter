@@ -6,3 +6,11 @@ test-output/
 tools/
 private/
 *.log
+
+# Cartridge drivers are fetched upstream by setup; do not redistribute their bytes.
+chrono/resources/*-driver.bin
+chrono/resources/bus-raster.asm
+chrono/resources/sprites-dpc.asm
+chrono/resources/pair-dpc.asm
+chrono/resources/sprites-cdfj.asm
+chrono/resources/pair-cdfj.asm

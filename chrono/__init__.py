@@ -1,2 +1,2 @@
-"""Chrono2 Studio — an Atari 2600 image converter."""
-__version__ = "0.1.0"
+"""Atari 2600 Image Optimizer — an Atari 2600 image converter."""
+__version__ = "0.4.0"

@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 import numpy as np
-from .core import DATA, BITS, CODES
+from .core import DATA, BITS, CODES, MODES
 
 def bank_bytes(indices):
     indices = np.asarray(indices)
@@ -19,7 +19,23 @@ def bank_bytes(indices):
     for start in (12,6,0): out.extend([24,0,*range(start,start+6)])
     return bytes(out)
 
-def assembly(indices, codes):
+def assembly(indices, codes, mode='Chronocolor custom', line_codes=()):
+    if mode in MODES[12:]:
+        from .twoframe_rom import assembly as pair
+        return pair(indices,codes,mode,line_codes)
+    if mode=='MovieCart frame':raise ValueError('MovieCart exports a streamed .mvc file, not 6507 assembly')
+    if mode in ('Multiplexed sprites','DPC+ sprites','CDFJ+ sprites'):
+        from .sprite_rom import assembly as sprite
+        return sprite(indices,codes,line_codes,{'Multiplexed sprites':'4K','DPC+ sprites':'DPC+','CDFJ+ sprites':'CDFJ+'}[mode])
+    if mode=='Bus stuffing (experimental)':
+        from .bus_rom import assembly as bus
+        return bus(indices)
+    if mode=='Playfield Plus':
+        from .playfield_plus import assembly as plus
+        return plus(indices,line_codes or (codes,)*192)
+    if mode in ('Chronocolor per line','Scanline color','No flicker — playfield'):
+        from .raster_rom import assembly as raster
+        return raster(indices,codes,line_codes,mode=='No flicker — playfield')
     if len(codes) != 4 or any(c not in CODES for c in codes): raise ValueError("Invalid NTSC codes")
     data = bank_bytes(indices)
     lines = ["; Generated image data: three frames, six strips, 128 rows bottom-up"]
@@ -31,9 +47,27 @@ def assembly(indices, codes):
     source = re.sub(r'^\s*include\s+"Bank_Frametable.asm".*$',lambda m:(DATA/"frametable.asm").read_text(),source,flags=re.I|re.M)
     for name,code in zip(("NTSC_RED","NTSC_GREEN","NTSC_BLUE","BGCOL"),codes):
         source = re.sub(rf'^{name}\s*=.*$',f"{name} = ${code}",source,flags=re.M)
-    return "; Chrono2 Studio. NTSC / 4KB. Retain the acknowledgements below.\n"+source
+    return "; Atari 2600 Image Optimizer. NTSC / 4KB. Retain the acknowledgements below.\n"+source
 
-def binary(indices,codes):
+def binary(indices,codes,mode='Chronocolor custom',line_codes=()):
+    if mode in MODES[12:]:
+        from .twoframe_rom import binary as pair
+        return pair(indices,codes,mode,line_codes)
+    if mode=='MovieCart frame':
+        from .moviecart import binary as movie
+        return movie(indices,line_codes)
+    if mode in ('Multiplexed sprites','DPC+ sprites','CDFJ+ sprites'):
+        from .sprite_rom import binary as sprite
+        return sprite(indices,codes,line_codes,{'Multiplexed sprites':'4K','DPC+ sprites':'DPC+','CDFJ+ sprites':'CDFJ+'}[mode])
+    if mode=='Bus stuffing (experimental)':
+        from .bus_rom import binary as bus
+        return bus(indices)
+    if mode=='Playfield Plus':
+        from .playfield_plus import binary as plus
+        return plus(indices,line_codes or (codes,)*192)
+    if mode in ('Chronocolor per line','Scanline color','No flicker — playfield'):
+        from .raster_rom import binary as raster
+        return raster(indices,codes,line_codes,mode=='No flicker — playfield')
     if len(codes) != 4 or any(c not in CODES for c in codes): raise ValueError("Invalid NTSC codes")
     meta = json.loads((DATA/"kernel-patches.json").read_text())
     template = (DATA/"kernel.bin").read_bytes()
