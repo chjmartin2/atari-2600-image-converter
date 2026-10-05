@@ -51,33 +51,22 @@ try:
         app.vars['dither'].set('Ordered 4×4');app.changed();wait()
         app.vars['search'].set('Improved weighted')
         app.convert(True);wait()
-        old_adjust=(app.vars['brightness'].get(),app.vars['contrast'].get())
-        app.vars['auto_input'].set(True);app.input_optimization_changed();wait()
-        assert (app.vars['brightness'].get(),app.vars['contrast'].get())!=old_adjust
-        app.convert(True);wait()
-        assert app.result[2].auto_input
-        assert (app.vars['brightness'].get(),app.vars['contrast'].get())==(app.result[2].brightness,app.result[2].contrast)
+        app.vars['optimization_scope'].set('Image only');app.start_optimization();wait()
         from chrono.core import prepare
         import numpy as np
         np.testing.assert_array_equal(app.result[0],prepare(app.source,app.result[2]))
+        assert app.before_result is not None
         frozen=app.result[0].copy();frozen_indices=app.result[1].copy()
-        frozen_controls=(app.vars['brightness'].get(),app.vars['contrast'].get())
-        app.vars['auto_input'].set(False);app.input_optimization_changed();wait()
-        np.testing.assert_array_equal(frozen,app.result[0])
-        np.testing.assert_array_equal(frozen_indices,app.result[1])
-        assert frozen_controls==(app.vars['brightness'].get(),app.vars['contrast'].get())
+        app.compare_before.set(True);app.show_result();app.compare_before.set(False);app.show_result()
+        np.testing.assert_array_equal(frozen,app.result[0]);np.testing.assert_array_equal(frozen_indices,app.result[1])
         app.vars['preset'].set('Grayscale');app.preset_changed();wait()
-        app.vars['auto_input'].set(True);app.input_optimization_changed();wait()
-        from chrono.optimization import fit_controls
-        expected=fit_controls(app.source,app.result[2])
-        assert abs(app.vars['brightness'].get()-expected.brightness)<.001
-        app.vars['auto_input'].set(False);app.input_optimization_changed();wait()
+        assert app.vars['optimization_scope'].get()=='Image only'
         # Real swatch click opens the picker; cancel preserves the live palette.
         for width in (1000,1320):
             app.geometry(f'{width}x850');app.update()
-            assert app.swatches.bbox('color11')[2]<=app.swatches.winfo_width()+1
+            assert app.swatches.bbox('component3')[2]<=app.swatches.winfo_width()+1
         before=app.read_settings().codes
-        bounds=app.swatches.bbox('color8')
+        bounds=app.swatches.bbox('component0')
         app.swatches.event_generate('<Button-1>',x=(bounds[0]+bounds[2])//2,y=35);app.update()
         picker=app.palette_picker
         picker.buttons['4E'].invoke();picker.destroy();app.update()
@@ -137,5 +126,5 @@ try:
         assert app.result[2].background=='Any Atari color'
         assert app.vars['background'].get()=='Any Atari color'
         assert not errors,errors
-        print('GUI smoke passed: visible input fitting, freeze/refit, joint search, swatch picker apply/cancel, layout, import, animation, crop, export, settings')
+        print('GUI smoke passed: visible input fitting, explicit scopes, comparison, swatch picker apply/cancel, layout, import, animation, crop, export, settings')
 finally:app.close()

@@ -5,7 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from chrono.core import MODES,DATA
 from chrono.drivers import strip_template
 from chrono.twoframe_rom import name,assembly
-for mode in (MODES[12],*MODES[14:]):
+for mode in (MODES[12],*MODES[14:17]):
  h=128 if mode==MODES[12] else 192
  source=assembly(np.zeros((h,48),dtype=np.uint8),('00',)*4,mode,(('00',)*8,)*h)
  stem=name(mode);(DATA/(stem+'.asm')).write_text(source,encoding='utf-8')

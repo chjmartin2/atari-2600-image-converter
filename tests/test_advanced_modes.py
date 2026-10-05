@@ -1,3 +1,4 @@
+from chrono.color import blend,dim,srgb_to_linear,distance
 import json,os,subprocess,tempfile,threading,unittest
 from pathlib import Path
 from dataclasses import replace
@@ -18,7 +19,7 @@ class AdvancedModesTests(unittest.TestCase):
    f=frame_pixels(i,s.codes,s.line_codes,s.mode)
    self.assertEqual(len(f),2 if mode==MODES[11] else 3)
    p=target_palette(s);yy,xx=np.indices(i.shape)
-   np.testing.assert_array_equal(np.rint(np.mean(f,axis=0)).astype(np.uint8),p[yy,xx,i])
+   np.testing.assert_array_equal(blend(f),p[yy,xx,i])
    if mode==MODES[11]:
     self.assertFalse(np.array_equal(f[0],f[1]));self.assertEqual(len(s.line_codes[0]),11)
     self.assertTrue(np.all(f[0][[0,-1]]==0))
@@ -62,4 +63,4 @@ class AdvancedModesTests(unittest.TestCase):
   with self.assertRaises(Cancelled):search_palette(self.image,Settings(mode=MODES[11]),cancel=cancel)
   f=np.array([[[[200,0,0]]],[[[0,0,100]]]],dtype=np.uint8)
   p=persistence_frames(f,.5)
-  np.testing.assert_array_equal(p[0,0,0],[133,0,33]);np.testing.assert_array_equal(p[1,0,0],[67,0,67])
+  np.testing.assert_array_equal(p[0,0,0],blend(f,weights=[2,1])[0,0]);np.testing.assert_array_equal(p[1,0,0],blend(f,weights=[1,2])[0,0])

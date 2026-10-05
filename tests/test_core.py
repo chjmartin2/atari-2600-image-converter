@@ -1,3 +1,4 @@
+from chrono.color import blend,dim,srgb_to_linear,distance
 import os
 from pathlib import Path
 import subprocess
@@ -89,7 +90,7 @@ class CartridgeTests(unittest.TestCase):
                     components[y,strip*8:strip*8+8,(y+f)%3]=np.unpackbits(np.uint8([byte]))
         np.testing.assert_array_equal(components,BITS[idx])
         colors=PRESETS['Neon'];frames=frame_pixels(idx,colors)
-        np.testing.assert_array_equal(np.rint(np.mean(frames,axis=0)).astype(np.uint8),hardware_palette(colors)[idx])
+        np.testing.assert_array_equal(blend(frames),hardware_palette(colors)[idx])
 
     def test_invalid_dimensions_and_codes(self):
         with self.assertRaises(ValueError):binary(np.zeros((48,128),np.uint8),Settings().codes)
@@ -114,7 +115,6 @@ class CartridgeTests(unittest.TestCase):
                 self.assertGreaterEqual(int.from_bytes(rom[-4:-2],'little'),0xF000)
 
 def _weighted_error(image,p):
-    delta=np.asarray(image,dtype=float)[:,:,None,:]-p
-    return ((delta*delta)*[.299,.587,.114]).sum(axis=3).min(axis=2).mean()
+    return (distance(np.asarray(image)[:,:,None,:],p)**2).min(axis=2).mean()
 
 if __name__=='__main__':unittest.main()

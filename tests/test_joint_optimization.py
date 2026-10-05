@@ -10,35 +10,19 @@ class JointOptimizationTests(unittest.TestCase):
     def setUp(self):
         self.image=Image.fromarray(np.random.default_rng(24).integers(0,256,(128,48,3),dtype=np.uint8))
 
-    def test_each_candidate_uses_its_own_tonal_target(self):
-        s=core.Settings(auto_input=True)
-        untoned=core.prepare(self.image,s,apply_auto=False)
-        context=core._input_tone_context(untoned)
-        palettes=list(core.PRESETS.values())
-        batch=[[core.CODES.index(c) for c in codes] for codes in palettes]
-        toned,_,_=core._candidate_input(np.asarray(untoned).reshape(-1,3),core._mixtures(batch),context)
-        for n,codes in enumerate(palettes):
-            final=core.input_tone_target(untoned,core.hardware_palette(codes)).astype(np.uint8)
-            np.testing.assert_array_equal(toned[n].reshape(128,48,3),final)
-        self.assertFalse(np.array_equal(toned[0],toned[1]))
-
-    def test_both_search_models_evaluate_tone_inside_scoring(self):
-        original=core._score
+    def test_both_search_models_use_fixed_source_when_auto_input_is_saved(self):
         for search in ('Legacy exhaustive','Improved weighted'):
-            contexts=[]
-            def score(*args,**kwargs):
-                contexts.append(kwargs.get('tone'))
-                return original(*args,**kwargs)
-            with patch.object(core,'_legacy_component_ranges',return_value=[(127,64,1)]),patch.object(core,'_score',side_effect=score):
-                codes,_=core.optimize(self.image,core.Settings(search=search,auto_input=True,background='Any Atari color'))
-            self.assertTrue(contexts);self.assertTrue(all(c is not None for c in contexts))
-            self.assertTrue(all(c in core.CODES for c in codes))
+            with patch.object(core,'_legacy_component_ranges',return_value=[(127,64,1)]):
+                s=core.Settings(search=search,background='Any Atari color')
+                a=core.optimize(self.image,s)
+                b=core.optimize(self.image,replace(s,auto_input=True))
+            self.assertEqual(a,b)
 
     def test_detail_penalty_rejects_collapsed_black_palette(self):
         a=np.broadcast_to(np.linspace(0,255,128)[:,None,None],(128,48,3)).astype(np.uint8)
         image=Image.fromarray(a);colors=core.representative_colors(image)
         black=[0,0,0,0];gray=[core.CODES.index(c) for c in core.PRESETS['Grayscale']]
-        scores=core._score([black,gray],colors,tone=core._input_tone_context(image))
+        scores=core._score([black,gray],colors)
         self.assertGreater(scores[0],scores[1])
 
     def test_toggle_is_reversible_repeatable_and_saved(self):

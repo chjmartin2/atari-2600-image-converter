@@ -1,6 +1,7 @@
 """Jointly fitted pairs of real, hardware-constrained image frames."""
 from dataclasses import replace
 import numpy as np
+from .color import blend,distance
 from .core import CODES,TIA,MODES,Settings,check_cancel
 
 BASES={MODES[12]:MODES[2],MODES[13]:MODES[4],MODES[14]:MODES[8],MODES[15]:MODES[9],MODES[16]:MODES[10]}
@@ -14,7 +15,13 @@ def validate_rows(s):
         for f in (0,4):
             if len({r[f+3] for r in rows})!=1:raise ValueError('Each sprite frame needs its own constant background')
             if s.mode in MODES[12:15] and any(r[f]!=r[f+1] or r[f]!=r[f+2] for r in rows):raise ValueError('This mode uses one foreground per row in each frame')
-        if s.mode==MODES[12] and len(set(map(tuple,rows)))!=1:raise ValueError('Two Color uses a uniform palette in each frame')
+        if s.mode==MODES[12]:
+            # Interleaving exchanges the same two global palettes between rows.
+            # Different backgrounds still require a uniform assignment per frame.
+            first=tuple(rows[0]);allowed={first}
+            if first[3]==first[7]:allowed.add(first[4:]+first[:4])
+            if any(tuple(r) not in allowed for r in rows):
+                raise ValueError('Two Color requires the same two palettes, optionally exchanged between rows with a shared background')
 
 def palette(s):
     h=128 if s.mode in MODES[12:14] else 192
@@ -23,7 +30,7 @@ def palette(s):
     component=(np.arange(48)//8)%2 if s.mode in MODES[15:17] else np.zeros(48,dtype=int)
     first=np.stack((colors[:,component],np.broadcast_to(colors[:,3,None],(h,48,3))),axis=2)
     second=np.stack((colors[:,component+4],np.broadcast_to(colors[:,7,None],(h,48,3))),axis=2)
-    return np.rint((first[:,:,PAIR[:,0]]+second[:,:,PAIR[:,1]])/2).astype(np.uint8)
+    return blend([first[:,:,PAIR[:,0]],second[:,:,PAIR[:,1]]])
 
 def split(indices,codes,rows,mode):
     s=Settings(mode=mode,codes=tuple(codes),line_codes=tuple(rows));validate_rows(s)
@@ -52,8 +59,8 @@ def _fit(pixels,start,bgs,cancel,axes=(0,1,2,3),shared_bg=False):
             allowed=bgs if axis in (1,3) else range(128)
             batch=np.tile(state,(len(allowed),1));batch[:,axis]=allowed
             if shared_bg:batch[:,3]=batch[:,1]
-            c=TIA[batch];p=(c[:,[0,0,1,1]]+c[:,[2,3,2,3]])/2
-            error=(((pixels[None,:,None,:]-p[:,None,:,:])**2)@np.array([.299,.587,.114])).min(axis=2).mean(axis=1)
+            c=TIA[batch];p=blend([c[:,[0,0,1,1]],c[:,[2,3,2,3]]])
+            error=(distance(pixels[None,:,None,:],p[:,None,:,:])**2).min(axis=2).mean(axis=1)
             state=batch[int(error.argmin())]
         if np.array_equal(state,old):break
     return state
@@ -63,13 +70,13 @@ def search(adjusted,s,progress,cancel):
     pixels=np.asarray(adjusted,dtype=np.float32);flat=pixels.reshape(-1,3);bgs=backgrounds(s)
     # Deterministic stratified sample keeps full-image palette fitting bounded.
     sample=flat[np.linspace(0,len(flat)-1,min(384,len(flat)),dtype=int)]
-    nearest=((TIA[:,None]-sample[None])**2).sum(axis=2).argmin(axis=0)
+    nearest=distance(TIA[:,None],sample[None]).argmin(axis=0)
     u,count=np.unique(nearest,return_counts=True);dominant=u[np.argsort(count)[-min(4,len(u)):]]
     winner=None;best=float('inf')
     for fg in (dominant[-1],dominant[0]):
-        v=_fit(sample,[fg,bgs[0],dominant[len(dominant)//2],bgs[-1]],bgs,cancel,shared_bg=s.balance_frames and s.mode in MODES[13:])
-        c=TIA[v];p=(c[[0,0,1,1]]+c[[2,3,2,3]])/2
-        error=(((sample[:,None]-p)**2)@np.array([.299,.587,.114])).min(axis=1).mean()
+        v=_fit(sample,[fg,bgs[0],dominant[len(dominant)//2],bgs[-1]],bgs,cancel,shared_bg=s.balance_frames)
+        c=TIA[v];p=blend([c[[0,0,1,1]],c[[2,3,2,3]]])
+        error=(distance(sample[:,None],p)**2).min(axis=1).mean()
         if error<best:best,winner=error,v
     rows=[]
     for y,row in enumerate(pixels):

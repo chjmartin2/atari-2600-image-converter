@@ -1,3 +1,4 @@
+from chrono.color import srgb_to_linear,linear_to_srgb
 import unittest
 import numpy as np
 from chrono.animation import FrameClock,persistence_frames
@@ -27,8 +28,8 @@ class AnimationTests(unittest.TestCase):
     def test_persistence_trails_previous_phase_without_changing_average(self):
         frames=np.zeros((3,128,48,3),dtype=np.uint8);frames[0,:,:,0]=210
         out=persistence_frames(frames,.5)
-        self.assertEqual(list(out[:,0,0,0]),[120,60,30])
-        np.testing.assert_array_equal(out.mean(axis=0),frames.mean(axis=0))
+        np.testing.assert_array_equal(out[:,0,0,0],linear_to_srgb(srgb_to_linear(210)*np.array([4,2,1])/7))
+        np.testing.assert_allclose(srgb_to_linear(out).mean(axis=0),srgb_to_linear(frames).mean(axis=0),atol=.002)
         with self.assertRaises(ValueError):persistence_frames(frames,1)
 
 if __name__=='__main__':unittest.main()

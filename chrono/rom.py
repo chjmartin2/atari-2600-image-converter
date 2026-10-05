@@ -20,7 +20,10 @@ def bank_bytes(indices):
     return bytes(out)
 
 def assembly(indices, codes, mode='Chronocolor custom', line_codes=()):
-    if mode in MODES[12:]:
+    if mode in MODES[17:20]:
+        from .extended_rom import assembly as extended
+        return extended(indices,codes,mode,line_codes)
+    if mode in MODES[12:17]:
         from .twoframe_rom import assembly as pair
         return pair(indices,codes,mode,line_codes)
     if mode=='MovieCart frame':raise ValueError('MovieCart exports a streamed .mvc file, not 6507 assembly')
@@ -50,7 +53,10 @@ def assembly(indices, codes, mode='Chronocolor custom', line_codes=()):
     return "; Atari 2600 Image Optimizer. NTSC / 4KB. Retain the acknowledgements below.\n"+source
 
 def binary(indices,codes,mode='Chronocolor custom',line_codes=()):
-    if mode in MODES[12:]:
+    if mode in MODES[17:20]:
+        from .extended_rom import binary as extended
+        return extended(indices,codes,mode,line_codes)
+    if mode in MODES[12:17]:
         from .twoframe_rom import binary as pair
         return pair(indices,codes,mode,line_codes)
     if mode=='MovieCart frame':

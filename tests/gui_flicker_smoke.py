@@ -27,10 +27,31 @@ try:
     assert all(v.endswith(('Static','Flicker')) for v in app.combos['mode'].cget('values'))
     app.combos['mode'].set(mode_description(MODES[13]));app.combos['mode'].event_generate('<<ComboboxSelected>>');wait()
     assert app.result[2].mode==MODES[13]
+    app.vars['mode'].set(MODES[12]);app.mode_changed();wait()
+    s=app.result[2];assert all(r[3]==r[7] for r in s.line_codes)
+    assert s.line_codes[1]==s.line_codes[0][4:]+s.line_codes[0][:4]
+    assert 'Alternating A/B scanlines' in app.mode_info.get()
+    app.balance_check.invoke();wait()
+    assert len(set(app.result[2].line_codes))==1
+    app.balance_check.invoke();wait()
+    s=app.result[2];assert s.line_codes[1]==s.line_codes[0][4:]+s.line_codes[0][:4]
+    app.show_animated_preview();app.update();assert len(app.animated_preview.frames)==2
+    app.animated_preview.close()
+    app.vars['mode'].set(MODES[0]);app.mode_changed();wait()
+    assert str(app.flicker_check.cget('state'))=='normal'
+    assert 'brightness only' in app.scope_help.get().lower()
+    app.vars['brightness'].set(.8);app.vars['contrast'].set(.8);app.vars['red'].set(.9);wait()
+    before=app.result[2]
+    app.adjust_input_to_palette();wait()
+    after=app.result[2]
+    for name in ('contrast','gamma','saturation','red','green','blue','sharpness','crop_zoom','codes'):
+        assert getattr(before,name)==getattr(after,name),name
+    assert after.brightness==.47 and app.vars['brightness'].get()==.47
+    assert str(app.combos['search_effort'].cget('state'))=='disabled'
     app.reset_all_options();wait()
     app.vars['red'].set(.35);app.vars['green'].set(1.8);wait()
     original=app.result[2]
-    button('Adjust input to palette').invoke();wait()
+    app.adjust_input_to_palette();wait()
     fitted=app.result[2]
     assert not fitted.auto_input and fitted.codes==original.codes
     assert (fitted.red,fitted.green,fitted.blue)!=(original.red,original.green,original.blue)
@@ -38,7 +59,7 @@ try:
         assert app.vars[name].get()==getattr(fitted,name)
     app.vars['mode'].set(MODES[11]);app.mode_changed();wait()
     palette=app.result[2].line_codes
-    button('Adjust input to palette').invoke();wait()
+    app.adjust_input_to_palette();wait()
     assert app.result[2].line_codes==palette
     app.vars['mode'].set(MODES[8]);app.mode_changed();wait()
     assert str(app.flicker_check.cget('state'))=='disabled'
@@ -55,13 +76,13 @@ try:
         started.set();assert release.wait(5)
         return replace(s,brightness=.25,red=.2)
     with patch('chrono.gui.fit_controls',side_effect=fit):
-        button('Adjust input to palette').invoke();app.convert();assert started.wait(5)
+        app.adjust_input_to_palette();app.convert();assert started.wait(5)
         button('Reset all options').invoke();release.set();wait()
     assert app.result[2]==Settings(),app.result[2]
     np.testing.assert_array_equal(app.source,source);assert app.source_path==source_path
     assert app.zoom.get()=='Fit' and not app.smooth.get()
     assert app.animated_preview is None
-    assert not app.pending_manual_fit and not app.pending_palette_search and not app.pending_global
+    assert app.pending_action is None
     assert not errors,errors
     print('Flicker GUI passed: standalone tone/RGB fitting, fixed row palettes, defaults, frame counts, reset during optimization')
 finally:

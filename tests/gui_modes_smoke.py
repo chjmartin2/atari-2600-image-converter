@@ -1,4 +1,4 @@
-"""Exercise all seventeen mode selections, global optimization, and portable exports."""
+"""Exercise all twenty mode selections, global optimization, and portable exports."""
 import sys,time,tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -42,13 +42,12 @@ try:
                 np.testing.assert_array_equal(frames[0],frames[1])
         # Global optimize and Stella routing also exercise the banked mode.
         app.vars['mode'].set(MODES[11]);app.mode_changed();wait()
-        app.vars['auto_input'].set(True);app.input_optimization_changed();wait()
+        app.vars['optimization_scope'].set('Image only');app.start_optimization();wait()
         app.convert(True,True);wait()
         assert app.result[2].mode==MODES[11]
         with patch('chrono.gui.subprocess.Popen') as launch:
             app.launch_stella();assert launch.call_args.args[0][-2]=='MVC'
             assert launch.call_args.args[0][-1].endswith('.mvc')
-        app.vars['auto_input'].set(False);app.input_optimization_changed();wait()
         app.vars['mode'].set(MODES[7]);app.mode_changed();wait()
         app.convert(True,True);wait()
         assert app.result[2].mode==MODES[7]
@@ -59,5 +58,5 @@ try:
         app.convert(True,True);wait()
         assert len(np.unique(app.result[1]))>1
         assert not errors,errors
-        print('All seventeen GUI modes, row-palette settings reload, ASM/BIN and MVC exports, animation and Global optimize passed')
+        print('All twenty GUI modes, row-palette settings reload, ASM/BIN and MVC exports, animation and Global optimize passed')
 finally:app.close()

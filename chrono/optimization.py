@@ -1,7 +1,7 @@
 """Alternating input/palette search with a fixed perceptual reference.
 
 No candidate can redefine the reference to make a washed-out image score well.
-The display estimate is the arithmetic temporal mixture, not a CRT measurement.
+The display estimate mixes linear light under an explicit sRGB assumption.
 """
 from dataclasses import replace
 import numpy as np
@@ -10,68 +10,37 @@ from .core import (MODES,PRESETS,FILTERS,dimensions,prepare,quantize,target_pale
                    check_cancel,_geometry,_adjust_image,frame_count,frame_pixels)
 from .modes import normalize,search_palette,render,convert_image
 
-LUMA=np.array([.299,.587,.114])
+from .color import blend,rgb_to_lab,delta_e_2000,luminance
 
 def perceptual_score(reference,output):
-    ref=np.asarray(reference,dtype=float)/255
-    out=np.asarray(output,dtype=float)/255
-    ry=ref@LUMA;oy=out@LUMA
-    # Bounded exposure adaptation models temporal brightness loss without allowing
-    # an arbitrarily dark palette to erase error. Gain itself also has a cost.
-    gain=float(np.clip((ry*oy).mean()/max((oy*oy).mean(),1e-8),.65,2.5))
-    adapted=np.clip(out*gain,0,1);ay=adapted@LUMA
-    color=float(((ref-adapted)**2 @ LUMA).mean())
-    edges=0.
-    for axis in (0,1):
-        if ref.shape[axis]>1:
-            edges+=float(((np.diff(ry,axis=axis)-np.diff(ay,axis=axis))**2).mean())
-    detail=max(0,float(ry.std())*.7-float(ay.std()))**2
-    chroma_ref=ref-ry[:,:,None];chroma_out=adapted-ay[:,:,None]
-    chroma=float(((chroma_ref-chroma_out)**2).mean())
-    clipping=float(np.maximum(out*gain-1,0).mean())
-    return color+.4*chroma+.55*edges+3*detail+.012*np.log2(gain)**2+.12*clipping
+    ref=rgb_to_lab(reference);out=rgb_to_lab(output)
+    # Same D65 white and absolute display scale for both sides. No fitted gain.
+    color=float(np.mean((delta_e_2000(ref,out)/100)**2))
+    ry=ref[...,0]/100;oy=out[...,0]/100
+    edges=sum(float(np.mean((np.diff(ry,axis=k)-np.diff(oy,axis=k))**2))
+              for k in (0,1) if ry.shape[k]>1)
+    detail=max(0.,float(ry.std())*.8-float(oy.std()))**2
+    return color+.55*edges+3*detail
 
 def flicker_enabled(s):
     return s.flicker_aware and frame_count(s.mode)>1
 
-
 def neutral_reference(image,s):
     # Fixed for the whole search: candidate controls cannot move the goalposts.
+    if s.mode==MODES[0]:return prepare(image,replace(s,brightness=1.))
     return prepare(image,replace(s,brightness=1.,contrast=1.,gamma=1.,saturation=1.,
                                  red=1.,green=1.,blue=1.))
 
-
 def flicker_score(reference,frames,mode):
-    """Conservative encoded-RGB display heuristic, not a calibrated CRT model.
+    """DE00 fidelity plus a separate linear-luminance flicker cost.
 
-    MovieCart lights each pixel in one of two fields, so its reference peak is
-    half intensity. Other temporal kernels retain a 75% reference peak to allow
-    simultaneous components and nonblack backgrounds. Neither depends on the
-    candidate palette. No per-candidate exposure gain can hide brightness loss.
+    Actual field duty is already in blend(). No second dimming or exposure
+    compensation belongs here. This is a display estimate, not CRT calibration.
     """
-    ref=np.asarray(reference,dtype=float)/255
-    f=np.asarray(frames,dtype=float)/255
-    out=f.mean(axis=0)
-    budget=.5 if mode==MODES[11] else .75
-    target=ref*budget
-    ry=target@LUMA;oy=out@LUMA
-    color=float(((target-out)**2 @ LUMA).mean())
-    chroma=float((((target-ry[...,None])-(out-oy[...,None]))**2).mean())
-    edges=0.
-    for axis in (0,1):
-        if ry.shape[axis]>1:
-            edges+=float(((np.diff(ry,axis=axis)-np.diff(oy,axis=axis))**2).mean())
-    # Loss of structure, including collapsed shadows, must not be rewarded.
-    detail=max(0.,float(ry.std())*.8-float(oy.std()))**2
-    shadow=ry<budget*.3
-    shadows=float(((ry[shadow]-oy[shadow])**2).mean()) if shadow.any() else 0.
-    # Variance between adjacent fields is a cost, never a substitute for fidelity.
-    fy=f@LUMA
-    temporal=float(((fy-np.roll(fy,1,axis=0))**2).mean())
+    fy=luminance(frames)
+    temporal=float(np.mean((fy-np.roll(fy,1,axis=0))**2))
     from .temporal import imbalance
-    temporal+=4*imbalance(f)
-    return color+.4*chroma+.65*edges+4*detail+.35*shadows+.025*temporal
-
+    return perceptual_score(reference,blend(frames))+.025*(temporal+4*imbalance(frames))
 
 def conversion_score(reference,indices,s):
     if flicker_enabled(s):
@@ -80,7 +49,10 @@ def conversion_score(reference,indices,s):
 
 
 def _preview_score(reference,adjusted,s):
-    indices=quantize(adjusted,target_palette(s),'None')
+    if s.mode in MODES[17:20]:
+        from .extended import convert
+        indices=convert(adjusted,replace(s,dither='None'))
+    else:indices=quantize(adjusted,target_palette(s),'None')
     return conversion_score(reference,indices,s)
 
 
@@ -88,6 +60,7 @@ def fit_controls(image,s,reference=None,global_fit=False,cancel=None):
     """Fit visible input controls while holding every output color code fixed."""
     s=normalize(s)
     reference=neutral_reference(image,s) if reference is None else reference
+    if s.mode==MODES[0]:return fit_classic_brightness(image,s,reference,global_fit,cancel)
     small=_geometry(image,s).resize(dimensions(s),FILTERS[s.resample])
     names=('brightness','contrast','gamma','saturation','red','green','blue')
     original=tuple(getattr(s,n) for n in names)
@@ -99,7 +72,7 @@ def fit_controls(image,s,reference=None,global_fit=False,cancel=None):
             trial=replace(s,**dict(zip(names,key)))
             tested[key]=_preview_score(reference,_adjust_image(small,trial),trial)
     evaluate(original);evaluate((1.,)*7)
-    contrasts=(.55,.85,1.15,1.6,2.,2.5) if flicker_enabled(s) else (.35,.55,.75,.95,1.15,1.4)
+    contrasts=(.35,.55,.75,1.,1.25,1.6,2.)
     for b in (.25,.4,.55,.7,.85,1.,1.2):
         for c in contrasts:evaluate((b,c,*original[2:]))
     best=min(tested,key=tested.get)
@@ -126,9 +99,20 @@ def fit_controls(image,s,reference=None,global_fit=False,cancel=None):
     return winner
 
 
+def fit_classic_brightness(image,s,reference,thorough=False,cancel=None):
+    """Owner-selected Classic preset; never search or multiply current brightness."""
+    check_cancel(cancel)
+    return replace(s,brightness=.47)
+
+
 def joint_optimize(image,s,global_search=False,progress=lambda p,t:None,cancel=None,iteration=lambda *args:None):
     """Alternate actual visible controls and actual palettes; retain the best state."""
     s=normalize(s)
+    if s.mode==MODES[0]:
+        progress(0,'Setting Classic RGB brightness to 0.47')
+        result=fit_controls(image,s,global_fit=global_search,cancel=cancel)
+        progress(1,f'Classic brightness: {result.brightness:.3f}')
+        return result
     baseline=replace(s,brightness=1.,contrast=1.,gamma=1.,saturation=1.,red=1.,green=1.,blue=1.)
     reference=neutral_reference(image,s)
     starts=[s]

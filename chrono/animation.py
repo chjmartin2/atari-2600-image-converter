@@ -4,6 +4,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
+from .color import srgb_to_linear,linear_to_srgb
 from PIL import Image, ImageTk
 from .core import frame_pixels, MODES, display_aspect, frame_count
 
@@ -35,10 +36,10 @@ def persistence_frames(frames,retention):
     """Optional periodic exponential trail; explicitly an illustrative approximation."""
     if not math.isfinite(retention) or not 0<=retention<=.8:
         raise ValueError("Persistence must be between 0 and 0.8")
-    data=np.asarray(frames,dtype=np.float32)
+    data=srgb_to_linear(frames)
     if data.ndim!=4 or data.shape[0] not in (1,2,3) or data.shape[-1]!=3:raise ValueError("Expected one, two or three RGB frames")
     a=retention
-    return np.uint8(np.rint(sum(a**k*np.roll(data,k,axis=0) for k in range(len(data)))/sum(a**k for k in range(len(data)))))
+    return linear_to_srgb(sum(a**k*np.roll(data,k,axis=0) for k in range(len(data)))/sum(a**k for k in range(len(data))))
 
 class AnimatedPreview(tk.Toplevel):
     def __init__(self,parent,indices,settings):
@@ -58,9 +59,10 @@ class AnimatedPreview(tk.Toplevel):
         box=ttk.Combobox(controls,textvariable=self.rate,values=list(RATES),state="readonly",width=23)
         box.pack(side="left");box.bind("<<ComboboxSelected>>",lambda e:self.change_rate())
         blend=ttk.Frame(self,padding=(16,0));blend.pack(fill="x")
-        ttk.Label(blend,text="Phosphor persistence (approximation)").pack(side="left")
+        ttk.Label(blend,text="Persistence (preview only)").pack(side="left")
         self.blend_label=ttk.Label(blend,text="60%",width=5);self.blend_label.pack(side="right")
         ttk.Scale(blend,from_=0,to=.8,variable=self.persistence,command=self.change_persistence).pack(side="right",fill="x",expand=True,padx=10)
+        ttk.Button(self,text='Export animated preview…',command=self.export_animation).pack(anchor='w',padx=16,pady=6)
         self.canvas=tk.Canvas(self,bg="#05070a",highlightthickness=0)
         # Reserve the lower explanatory rows before allocating the image area.
         ttk.Label(self,text="Nominal NTSC pace; desktop timing is not synchronized to your monitor.\nColors, flicker and CRT persistence will differ. Use Stella or hardware for validation.",style="Muted.TLabel",padding=(16,10)).pack(side="bottom",fill="x")
@@ -74,7 +76,8 @@ class AnimatedPreview(tk.Toplevel):
         self.set_result(indices,settings)
 
     def set_result(self,indices,settings):
-        static=settings.mode in (MODES[2],*MODES[4:11])
+        self.export_indices=np.array(indices,copy=True);self.export_settings=settings
+        static=frame_count(settings.mode)==1
         self.title("ATARI Rendering Preview — " + ("static output" if static else "two-field simulation" if frame_count(settings.mode)==2 else "three-frame simulation"))
         self.heading.configure(text="ATARI RENDERING PREVIEW")
         self.description.configure(text=("This mode repeats the same image on every frame." if static else "Plays the cartridge’s interleaved frames, not the static average.")+"\nSnapshot of the last completed conversion; reopen to load a newer result.")
@@ -94,7 +97,7 @@ class AnimatedPreview(tk.Toplevel):
         if self.closed:return
         if self.resize_job is not None:self.after_cancel(self.resize_job);self.resize_job=None
         w,h=max(1,self.canvas.winfo_width()),max(1,self.canvas.winfo_height())
-        bw,bh={"Atari pixels 2:1":(96,128),"Display 4:3":(4,3),"BUS raster":(6,5),"Sprite raster":(1,2),"Movie raster":(5,6),"Raw pixels":(self.frames[0].shape[1],self.frames[0].shape[0])}[self.aspect]
+        bw,bh={"Atari pixels 2:1":(96,128),"Display 4:3":(4,3),"BUS raster":(6,5),"Sprite raster":(1,2),"Wide raster":(1,1),"Movie raster":(5,6),"Raw pixels":(self.frames[0].shape[1],self.frames[0].shape[0])}[self.aspect]
         scale=min(w/bw,h/bh);size=(max(1,round(bw*scale)),max(1,round(bh*scale)))
         frames=persistence_frames(self.frames,self.persistence.get())
         self.photos=[ImageTk.PhotoImage(Image.fromarray(frame).resize(size,Image.Resampling.NEAREST),master=self) for frame in frames]
@@ -138,6 +141,11 @@ class AnimatedPreview(tk.Toplevel):
         self.paint()
         # The monotonic clock controls phase; polling only chooses when to paint.
         self.job=self.after(4 if self.clock.running else 50,self.tick)
+
+    def export_animation(self):
+        from .web_preview import AnimationExport
+        self.export_dialog=AnimationExport(self,self.export_indices,self.export_settings,
+            rate=RATES[self.rate.get()],retention=self.persistence.get())
 
     def close(self):
         self.closed=True

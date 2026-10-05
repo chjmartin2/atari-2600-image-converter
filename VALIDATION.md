@@ -111,3 +111,43 @@ Application renamed to Atari 2600 Image Optimizer; legacy launcher, saved mode I
 Stella re-verification with the interleaved row data passes for all five two-frame modes and the static/temporal raster kernels: every pixel matches, every frame has 262 scanlines, and temporal frames alternate. No physical hardware validation is claimed.
 
 Public packaging contains zero-filled external-driver slots, with tests to reject embedded driver bytes. All three upstream download paths independently reproduced the expected driver SHA-256 values. Locally fetched drivers and generated driver-bearing ASM are ignored; setup obtains these from the original upstream sources. Export after restoration continues to match independent DASM output exactly.
+
+## Universal light and color model — October 5, 2026 (0.5.0 development)
+
+This supersedes the encoded-RGB averages, palette-dependent target remapping, exposure adaptation, fixed flicker reference budgets and Classic 0.30 rule described in earlier records. Palette RGB is explicitly assumed display-referred sRGB. Temporal blending, duty cycles, persistence and diffusion operate in linear light; both palette searches, quantization and input fitting use D65 CIEDE2000. Classic still fits brightness only. Optional flicker scoring adds a separate linear-luminance cost and never darkens the input by itself.
+
+- All 92 automated tests passed with DASM enabled and no skipped assembler checks. Coverage includes 34 published CIEDE2000 reference vectors, scalar/vector nearest-color agreement, all 256 transfer-function round trips, known half-duty and three-primary light levels, all twenty mode palettes versus actual frame light, linear-gray dither energy, fixed-reference scoring and old settings loading.
+- GUI smoke checks passed ordinary editing/optimization, palette picker, crop, comparison, animation, export and settings. A separate twenty-mode GUI run passed mode selection, palette search, row-palette reload, ASM/BIN/MVC export, animation and joint optimization. Flicker GUI checks passed brightness-only Classic fitting, visible tone/RGB controls, fixed row palettes and reset during a worker.
+- After deduplicating identical wide-mode color mixtures to reduce search memory/work, all eight extended-mode tests passed again, including independent DASM parity. Every legal foreground/background candidate remains in the ranking.
+- Kernel templates, cartridge packing and raw hardware frame colors were not changed. Previous Stella execution checks remain historical evidence; this change was checked through math, conversion, GUI and assembler tests, not a new physical CRT or Harmony session.
+- Old settings retain manual adjustments but now render through the new model. Saved settings identify `srgb-linear-light-d65-ciede2000-v1`. Reset old compensating image adjustments before evaluating the new defaults. Existing exported ROMs remain untouched.
+
+## Original Chronocolor fixed brightness preset — October 5, 2026
+
+At the owner's request, Original Chronocolor image optimization now sets brightness to the absolute value 0.47. It preserves contrast, input gamma, saturation, RGB gains, sharpness, geometry and the fixed Classic palette. Repeated optimization reapplies 0.47; manual brightness edits remain available. Neither search effort nor the flicker-scoring option changes this preset. Classic's search-effort control is disabled and its help text explains the fixed preset.
+
+This replaces Classic's automatic brightness search only. The nineteen other modes and the shared light/color model remain unchanged. Code comparison confirmed that all other optimizer functions are identical apart from Classic's progress message; the nineteen remaining application modules are byte-identical. GUI checks verified the actual 0.47 slider value, retained controls, other modes' image fitting and reset behavior.
+
+All 92 automated tests passed with DASM enabled, followed by successful Classic/flicker and general GUI smoke checks. No skipped assembler checks.
+
+## Website animation export — October 5, 2026
+
+Added Export animated preview above Atari Output, in File, and inside ATARI Rendering Preview. The new dialog saves lossless looping WebP with adjustable rate (60/30/10/3 fps), persistence (0–80%) and longest side (320/640/960 pixels). Main-window defaults are 60 fps, 60% persistence and 640 pixels; rendering-window export inherits that window's speed/persistence. The completed conversion is captured when the dialog opens. Static modes save a still WebP; no extra motion is invented. The older slowed GIF export is retained.
+
+New format checks decode saved files and verify exact lossless frame colors, phase order, persistence, proportions, infinite loop metadata and 50 ms/100 ms complete cycles for three/two-frame 60 fps output. Separate checks cover static output, all modes' geometry, invalid settings and atomic-save failure preserving an existing destination. GUI checks invoke the new buttons, verify visibility at 1000x700 and 1320x850, preserve the export snapshot during later edits, and save from both windows. General GUI smoke also passed. Browser scheduling and physical CRT playback are not measured by these checks.
+
+All 96 automated tests passed with DASM enabled and no skipped checks. New export GUI and general GUI smoke checks passed.
+
+## Diffusion spill correction — October 5, 2026
+
+All 103 automated tests passed with DASM enabled. Seven new regressions cover kernel normalization, unsupported highlights, signed-error energy balance, local palette bounds, exact-black preservation for all six diffusers in both scan directions, palettes without black, and an impossible hue inside the palette's RGB bounding box. General GUI smoke and the new dither GUI check passed; the latter exercises all six diffusion selections and verifies raw animated frames as well as the static output.
+
+A reproducible comparison using the prepared Britney image at brightness 0.47 with an added black border found 214 incorrectly lit black pixels before the fix and zero afterward, across 1,667 black source pixels. This is a software regression example, not a physical CRT measurement. Classic's 0.47 preset, palette search, temporal blending, kernel templates and cartridge packing remain unchanged.
+
+## Windows standalone release 0.5.0 — October 5, 2026
+
+The Windows x64 folder bundle includes Python, NumPy, Pillow and Tk through PyInstaller 6.22.3. A clean-user smoke run with system Python absent from PATH passed conversion and WebP export for all twenty modes, ordinary cartridge/MVC exports, image import, the GUI and rendering window. Missing optional driver exports reported the setup instructions. A second run with the private, checksum-verified driver cache passed exports for all twenty modes as well. Neither the cache nor test exports enter the distribution. The EXE is unsigned; physical Atari/cartridge validation remains outstanding.
+
+Source GUI and animated-export GUI checks passed. Public packaging checks preserve zero-filled driver slots and omit driver binaries and driver-bearing ASM. The new standalone caches optional cartridge support in LocalAppData; source checkouts retain their existing resource location.
+
+Release gate: all 105 unit tests passed with DASM enabled; general GUI and animated-export GUI checks passed. Both packaged standalone self-tests passed with system Python absent from PATH.

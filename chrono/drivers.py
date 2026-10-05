@@ -1,5 +1,6 @@
 """Optional cartridge support, retrieved from upstream rather than redistributed."""
-import hashlib,io,tarfile,urllib.request
+import hashlib,io,tarfile,urllib.request,os,sys
+from pathlib import Path
 from .core import DATA
 SPECS={
  'bus2':('2d489398d221bd340e8ea7af129045c0147089a0b17785e6cea87a094cdb81d0',2048),
@@ -12,13 +13,18 @@ def verify(name,data):
     if len(data)!=size or hashlib.sha256(data).hexdigest()!=digest:raise ValueError(name+' support checksum mismatch')
     return data
 
+def support_directory():
+    if getattr(sys,'frozen',False):
+        return Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData'/'Local'))/'RetroComputerist'/'Atari2600ImageOptimizer'/'drivers'
+    return DATA
+
 def load(name):
-    path=DATA/(name+'-driver.bin')
+    path=support_directory()/(name+'-driver.bin')
     if not path.is_file():raise ValueError('Cartridge support missing. Run Setup cartridge support.cmd once with an Internet connection, then retry.')
     return verify(name,path.read_bytes())
 
 def fetch(url):
-    with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'Atari2600ImageOptimizer/0.4.0'}),timeout=60) as r:
+    with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'Atari2600ImageOptimizer/0.5.0'}),timeout=60) as r:
         data=r.read(32*1024*1024+1)
     if len(data)>32*1024*1024:raise ValueError('Upstream download exceeds size limit')
     return data
@@ -44,7 +50,8 @@ def setup():
         try:load(name);print(name+': ready');continue
         except (OSError,ValueError):pass
         print('Downloading '+name+' support from its original source...')
-        data=download(name);path=DATA/(name+'-driver.bin')
+        data=download(name);path=support_directory()/(name+'-driver.bin')
+        path.parent.mkdir(parents=True,exist_ok=True)
         temporary=path.with_suffix('.tmp');temporary.write_bytes(data);temporary.replace(path)
         print(name+': checksum verified')
 

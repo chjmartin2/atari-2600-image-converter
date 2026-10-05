@@ -7,6 +7,8 @@ import threading
 import time
 import numpy as np
 from PIL import Image, ImageEnhance, ImageOps, ImageFilter
+from .color import (MODEL,srgb_to_linear,linear_to_srgb,rgb_to_lab,linear_to_lab,
+                    delta_e_2000,distance,dim,nearest_linear,diffusion_target)
 
 DATA = Path(__file__).parent / "resources"
 RECORDS = json.loads((DATA / "ntsc.json").read_text())
@@ -32,33 +34,36 @@ KERNELS = {
     "Burkes": (32, [(1,0,8),(2,0,4),(-2,1,2),(-1,1,4),(0,1,8),(1,1,4),(2,1,2)]),
 }
 DITHERS = ["None", "Ordered 2×2", "Ordered 4×4", "Ordered 8×8", *KERNELS]
-MODES = ['Chronocolor classic','Chronocolor custom','Two Color','Chronocolor per line','Scanline color','No flicker — playfield','Playfield Plus','Bus stuffing (experimental)', 'Multiplexed sprites', 'DPC+ sprites', 'CDFJ+ sprites', 'MovieCart frame', 'Two Color (2 frames)', 'Scanline color (2 frames)', 'Multiplexed sprites (2 frames)', 'DPC+ sprites (2 frames)', 'CDFJ+ sprites (2 frames)']
+MODES = ['Chronocolor classic','Chronocolor custom','Two Color','Chronocolor per line','Scanline color','No flicker — playfield','Playfield Plus','Bus stuffing (experimental)', 'Multiplexed sprites', 'DPC+ sprites', 'CDFJ+ sprites', 'MovieCart frame', 'Two Color (2 frames)', 'Scanline color (2 frames)', 'Multiplexed sprites (2 frames)', 'DPC+ sprites (2 frames)', 'CDFJ+ sprites (2 frames)', 'Hybrid playfield + sprites', '96-pixel interleaved bitmap', 'Television interlace (experimental)']
 
 def frame_count(mode):
-    return 2 if mode in MODES[11:] else 3 if mode in (MODES[0],MODES[1],MODES[3]) else 1
+    return 2 if mode in (*MODES[11:17],*MODES[18:20]) else 3 if mode in (MODES[0],MODES[1],MODES[3]) else 1
 
 def mode_description(mode):
     return mode + (' — Flicker' if frame_count(mode)>1 else ' — Static')
 
 
 def dimensions(s):
-    if s.mode in MODES[12:]:return (48,128) if s.mode in MODES[12:14] else (48,192)
+    if s.mode in MODES[17:20]:return {MODES[17]:(160,192),MODES[18]:(96,192),MODES[19]:(48,384)}[s.mode]
+    if s.mode in MODES[12:17]:return (48,128) if s.mode in MODES[12:14] else (48,192)
     if s.mode==MODES[7]:return (16,192)
     if s.mode==MODES[11]:return (80,192)
     if s.mode in MODES[8:11]:return (48,192)
     return (40,192) if s.mode in MODES[5:] else (48,128)
 
 def cartridge_type(mode):
-    if mode in MODES[12:]:return "F8" if mode in MODES[12:15] else "DPC+" if mode==MODES[15] else "CDF"
+    if mode in MODES[17:20]:return "F8" if mode==MODES[19] else "F4"
+    if mode in MODES[12:17]:return "F8" if mode in MODES[12:15] else "DPC+" if mode==MODES[15] else "CDF"
     if mode in MODES[9:]:return {MODES[9]:'DPC+',MODES[10]:'CDF',MODES[11]:'MVC'}[mode]
     return 'BUS' if mode==MODES[7] else 'F6' if mode==MODES[6] else '4K'
 
 def cartridge_size(mode):
-    return {'F8':8192,'BUS':32768,'F6':16384,'4K':4096,'DPC+':32768,'CDF':32768,'MVC':30*60*4096}[cartridge_type(mode)]
+    return {'F4':32768,'F8':8192,'BUS':32768,'F6':16384,'4K':4096,'DPC+':32768,'CDF':32768,'MVC':30*60*4096}[cartridge_type(mode)]
 
 def display_aspect(s):
+    if s.mode in MODES[17:20]:return "Raw pixels" if s.aspect=="Raw pixels" else {MODES[17]:"Display 4:3",MODES[18]:"Wide raster",MODES[19]:"Sprite raster"}[s.mode]
     if s.mode in MODES[12:14]:return s.aspect
-    if s.mode in MODES[14:]:return "Raw pixels" if s.aspect=="Raw pixels" else "Sprite raster"
+    if s.mode in MODES[14:17]:return "Raw pixels" if s.aspect=="Raw pixels" else "Sprite raster"
     if s.mode in MODES[8:]:return 'Raw pixels' if s.aspect=='Raw pixels' else 'Movie raster' if s.mode==MODES[11] else 'Sprite raster'
     return 'BUS raster' if s.mode==MODES[7] else 'Display 4:3' if s.mode in MODES[5:] else s.aspect
 
@@ -71,6 +76,7 @@ class Settings:
     aspect: str = "Atari pixels 2:1"
     crop_x: float = .5
     crop_y: float = .5
+    crop_zoom: float = 1.0
     brightness: float = 1.0
     contrast: float = 1.0
     saturation: float = 1.0
@@ -93,10 +99,21 @@ class Settings:
     auto_input: bool = False
     flicker_aware: bool = True
     balance_frames: bool = True
+    optimization_scope: str = 'Image + colors'
+    search_effort: str = 'Standard'
 
     def validate(self):
         if self.mode not in MODES:raise ValueError('Unknown output mode')
-        if self.mode in MODES[12:]:
+        if self.optimization_scope not in ('Image + colors','Image only','Colors only'):
+            raise ValueError('Unknown optimization scope')
+        if self.search_effort not in ('Standard','Thorough'):
+            raise ValueError('Unknown search effort')
+        if self.mode in MODES[17:20]:
+            from .extended import validate_rows
+            validate_rows(self)
+            replace(self,mode=MODES[1],line_codes=()).validate()
+            return self
+        if self.mode in MODES[12:17]:
             from .twoframe import validate_rows,BASES
             validate_rows(self)
             replace(self,mode=BASES[self.mode],line_codes=()).validate()
@@ -120,13 +137,13 @@ class Settings:
             raise ValueError("Gamma or dither strength is out of range")
         if not 0 <= float(self.crop_x) <= 1 or not 0 <= float(self.crop_y) <= 1:
             raise ValueError("Crop position must be between 0 and 1")
+        if not 1 <= float(self.crop_zoom) <= 8:
+            raise ValueError("Input crop zoom must be between 1 and 8")
         if not isinstance(self.auto_input,bool):raise ValueError("Optimize input must be on or off")
         if not isinstance(self.balance_frames,bool):raise ValueError("Frame balancing must be on or off")
         if not isinstance(self.flicker_aware,bool):raise ValueError("Flicker-aware optimization must be on or off")
         if len(self.codes) != 4 or any(c not in CODES for c in self.codes):
             raise ValueError("Choose four valid even NTSC color codes")
-        if self.mapping == "Legacy RGB targets" and tuple(self.codes) != PRESETS["RGB (original Chronocolour)"]:
-            raise ValueError("Legacy RGB targets requires the original RGB component colors")
         return self
 
     @classmethod
@@ -135,13 +152,14 @@ class Settings:
         if data.get("schema") != 1:
             raise ValueError("Unsupported settings version")
         values=data['settings']
+        values['mapping']='Temporal blend'
         if 'codes' in values:values['codes']=tuple(values['codes'])
         if 'line_codes' in values:values['line_codes']=tuple(tuple(row) for row in values['line_codes'])
         return cls(**values).validate()
 
     def save(self, path):
         self.validate()
-        Path(path).write_text(json.dumps({"schema":1,"settings":asdict(self)}, indent=2), encoding="utf-8")
+        Path(path).write_text(json.dumps({"schema":1,"color_model":MODEL,"settings":asdict(self)}, indent=2), encoding="utf-8")
 
 def load_image(path):
     with Image.open(path) as im:
@@ -158,7 +176,9 @@ def prepare(image, settings, apply_auto=True):
     return _adjust_image(_geometry(image,s),s).resize(dimensions(s),FILTERS[s.resample])
 
 def geometry_target(size,s):
-    if s.mode in MODES[12:]:
+    if s.mode in MODES[17:20]:
+        return dimensions(s) if s.aspect=="Raw pixels" else {MODES[17]:(512,384),MODES[18]:(384,384),MODES[19]:(192,384)}[s.mode]
+    if s.mode in MODES[12:17]:
         from .twoframe import BASES
         return geometry_target(size,replace(s,mode=BASES[s.mode],line_codes=()))
     if s.mode in MODES[8:]:
@@ -169,13 +189,29 @@ def geometry_target(size,s):
     if size == (48,128):return (48,128)
     return {"Atari pixels 2:1": (384,512), "Display 4:3": (512,384), "Raw pixels": (48,128)}[s.aspect]
 
+def crop_bounds(size,s):
+    """Source-space selection after rotation/mirroring; Stretch never locks aspect."""
+    sw,sh=size
+    vw,vh=float(sw),float(sh)
+    if s.scale=='Fill / crop':
+        tw,th=geometry_target(size,s)
+        scale=max(tw/sw,th/sh)
+        vw,vh=tw/scale,th/scale
+    vw/=s.crop_zoom;vh/=s.crop_zoom
+    left=(sw-vw)*s.crop_x;top=(sh-vh)*s.crop_y
+    return left,top,left+vw,top+vh
+
+
 def drag_crop_position(source_size,s,delta,display_size):
     """Move the picture with the pointer; crop offsets refer to rotated/mirrored space."""
     sw,sh=source_size
     if s.rotate in (90,270):sw,sh=sh,sw
     tw,th=geometry_target((sw,sh),s)
-    scale=max(tw/sw,th/sh)
-    visible=(tw/scale,th/scale);excess=(sw-visible[0],sh-visible[1])
+    left,top,right,bottom=crop_bounds((sw,sh),s)
+    visible=(right-left,bottom-top);excess=(sw-visible[0],sh-visible[1])
+    if s.scale=='Fit':
+        fit=min(tw/visible[0],th/visible[1])
+        display_size=(display_size[0]*visible[0]*fit/tw,display_size[1]*visible[1]*fit/th)
     result=[]
     for pos,motion,span,extra,display in zip((s.crop_x,s.crop_y),delta,visible,excess,display_size):
         result.append(float(np.clip(pos-motion*span/(max(display,1)*extra),0,1)) if extra>1e-8 else pos)
@@ -188,12 +224,17 @@ def _geometry(image,s):
     # Work in display coordinates before reducing to 48 unusually wide pixels.
     target = geometry_target(im.size,s)
     filt = FILTERS[s.resample]
+    bounds=crop_bounds(im.size,s)
     if s.scale == "Fit":
+        if s.crop_zoom!=1:
+            # Keep a single source crop, then letterbox its original aspect ratio.
+            size=(max(1,round(im.width/s.crop_zoom)),max(1,round(im.height/s.crop_zoom)))
+            im=im.resize(size,filt,box=bounds)
         im = ImageOps.pad(im, target, method=filt, color="black")
     elif s.scale == "Fill / crop":
-        im = ImageOps.fit(im, target, method=filt,centering=(s.crop_x,s.crop_y))
+        im = im.resize(target,filt,box=bounds)
     else:
-        im = im.resize(target, filt)
+        im = im.resize(target, filt,box=bounds)
     return im
 
 def _adjust_image(im,s):
@@ -203,85 +244,24 @@ def _adjust_image(im,s):
     a = np.clip(a * [s.red,s.green,s.blue], 0, 1) ** (1/s.gamma)
     return Image.fromarray(np.uint8(np.rint(a*255)))
 
-def input_tone_target(image,palette):
-    """CGA Studio's robust channel range matching, bounded to avoid noise expansion."""
-    a=np.asarray(image,dtype=np.float32);p=np.asarray(palette,dtype=np.float32)
-    low,high=np.percentile(a,[1,99],axis=(0,1))
-    pmin,pmax=p.min(axis=0),p.max(axis=0)
-    span=high-low
-    scale=np.minimum(1,(pmax-pmin)/np.maximum(span,1))
-    remapped=(a-low)*scale+pmin
-    # Flat channels must not turn white/solid images into palette black.
-    remapped=np.where(span[None,None,:]<2,a,remapped)
-    return np.clip(remapped,pmin,pmax).astype(np.float32)
-
-def _input_tone_context(image):
-    a=np.asarray(image,dtype=np.float32)
-    low,high=np.percentile(a,[1,99],axis=(0,1))
-    return low,high,np.var(a,axis=(0,1))
-
-def _candidate_input(colors,mix,context):
-    """Palette-specific tonal target estimate for search; fit controls afterward."""
-    low,high,variance=context
-    span=high-low;pmin=mix.min(axis=1);pmax=mix.max(axis=1)
-    scale=np.minimum(1,(pmax-pmin)/np.maximum(span,1))
-    adjusted=(colors[None,:,:]-low)*scale[:,None,:]+pmin[:,None,:]
-    adjusted=np.where(span[None,None,:]<2,colors[None,:,:],adjusted)
-    adjusted=np.clip(adjusted,pmin[:,None,:],pmax[:,None,:]).astype(np.uint8).astype(np.float32)
-    # Compare error in source-range units so dark palettes cannot win merely
-    # by compressing every difference toward zero. Penalize lost channel detail.
-    normalization=np.where(span[None,:]<2,1,np.maximum(scale,.05))
-    loss=np.where((pmax-pmin)<1,1.,.015*(1-scale)**2)*variance
-    return adjusted,normalization,loss
-
 def optimize_input(image,settings,progress=lambda value,text:None,cancel=None):
-    """Fit visible brightness/contrast controls to a palette-limited tonal target.
+    """Compatibility entry point for the shared visible-control optimizer."""
+    from .optimization import fit_controls
+    progress(0,'Matching input to the current palette with CIEDE2000')
+    result=fit_controls(image,settings,cancel=cancel)
+    progress(1,'Input matching complete')
+    return result
 
-    Uses an absolute neutral baseline, so repeated clicks do not keep darkening.
-    Other user adjustments are retained. Full-size evaluation validates finalists.
-    """
-    s=settings.validate();neutral=replace(s,brightness=1.,contrast=1.)
-    geometry=_geometry(image,s);small=geometry.resize((48,128),FILTERS[s.resample])
-    palette=target_palette(s).astype(np.float32)
-    target=input_tone_target(_adjust_image(small,neutral),palette)
-    weights=np.array([.299,.587,.114])
-    def score(arr,target):
-        tone=((arr-target)**2*weights).sum(axis=2).mean()
-        nearest=(((arr[:,:,None,:]-palette)**2)*weights).sum(axis=3).min(axis=2).mean()
-        return .85*tone+.15*nearest
-    candidates={}
-    def evaluate(brightness,contrast):
-        check_cancel(cancel)
-        key=(round(float(brightness),4),round(float(contrast),4))
-        if key not in candidates:
-            im=_adjust_image(small,replace(s,brightness=key[0],contrast=key[1]))
-            candidates[key]=score(np.asarray(im,dtype=np.float32),target)
-    for i,b in enumerate(np.linspace(.1,1.5,22)):
-        for c in np.linspace(.15,1.5,19):evaluate(b,c)
-        progress(.7*(i+1)/22,"Matching input tone to output palette")
-    evaluate(1,1);evaluate(s.brightness,s.contrast)
-    best=min(candidates,key=candidates.get)
-    for b in np.linspace(max(.05,best[0]-.08),min(3,best[0]+.08),9):
-        for c in np.linspace(max(.05,best[1]-.1),min(3,best[1]+.1),9):evaluate(b,c)
-    # Recheck the leading candidates through the exact conversion preparation path.
-    target=input_tone_target(prepare(image,neutral),palette)
-    finalists=sorted(candidates,key=candidates.get)[:8]
-    finalists+=list(dict.fromkeys([(1.,1.),(s.brightness,s.contrast)]))
-    scores=[]
-    for i,(b,c) in enumerate(finalists):
-        check_cancel(cancel)
-        im=prepare(image,replace(s,brightness=b,contrast=c))
-        scores.append(score(np.asarray(im,dtype=np.float32),target))
-        progress(.7+.3*(i+1)/len(finalists),"Checking optimized input")
-    b,c=finalists[int(np.argmin(scores))]
-    return replace(s,brightness=b,contrast=c)
 
 def hardware_palette(codes):
-    colors = TIA[[CODES.index(c) for c in codes]]
-    return np.rint((BITS @ colors[:3] + (3-BITS.sum(axis=1))[:,None]*colors[3])/3).astype(np.uint8)
+    colors = srgb_to_linear(TIA[[CODES.index(c) for c in codes]])
+    return linear_to_srgb((BITS @ colors[:3] + (3-BITS.sum(axis=1))[:,None]*colors[3])/3)
 
 def target_palette(settings):
-    if settings.mode in MODES[12:]:
+    if settings.mode in MODES[17:20]:
+        from .extended import palette
+        return palette(settings)
+    if settings.mode in MODES[12:17]:
         from .twoframe import palette
         return palette(settings)
     if settings.mode in MODES[8:]:
@@ -292,7 +272,7 @@ def target_palette(settings):
         fg=colors[:,np.arange(w)//8] if movie else colors[:,(np.arange(w)//8)%2] if settings.mode in MODES[9:11] else np.repeat(colors[:,0,None,:],w,axis=1)
         bg=np.broadcast_to(colors[:,-1,None,:],fg.shape)
         p=np.empty((h,w,8,3),dtype=np.float32);p[:,:,:7]=fg[:,:,None,:];p[:,:,7]=bg
-        if movie:p*=.5;p[[0,-1]]=0
+        if movie:p=dim(p,.5);p[[0,-1]]=0
         return np.rint(p).astype(np.uint8)
     if settings.mode==MODES[7]:return TIA.astype(np.uint8)
     if settings.mode==MODES[6]:
@@ -311,8 +291,6 @@ def target_palette(settings):
         p=hardware_palette((settings.codes[0],)*3+(settings.codes[3],))
         p[:7]=p[0]
         return p
-    if settings.mapping == "Legacy RGB targets":
-        return BITS*255
     return hardware_palette(settings.codes)
 
 class Cancelled(Exception):
@@ -329,16 +307,19 @@ def bayer(n):
     return (a+.5)/(n*n)-.5
 
 def quantize(image, palette, method="None", strength=1, serpentine=False, cancel=None):
-    a = np.asarray(image, dtype=np.float32).copy()
-    p = np.asarray(palette, dtype=np.float32)
+    a = srgb_to_linear(image)
+    p = srgb_to_linear(palette)
     h,w = a.shape[:2]
-    if p.ndim==2:p=np.broadcast_to(p,(h,*p.shape))
+    lab=linear_to_lab(p)
+    if p.ndim==2:
+        p=np.broadcast_to(p,(h,*p.shape));lab=np.broadcast_to(lab,(h,*lab.shape))
     if p.shape[0]!=h:raise ValueError('Palette height must match the image')
-    if p.ndim==3:p=np.broadcast_to(p[:,None,:,:],(h,w,*p.shape[1:]))
+    if p.ndim==3:
+        p=np.broadcast_to(p[:,None,:,:],(h,w,*p.shape[1:]));lab=np.broadcast_to(lab[:,None,:,:],(h,w,*lab.shape[1:]))
     if p.shape[:2]!=(h,w):raise ValueError('Palette dimensions must match the image')
     if method.startswith("Ordered"):
         n = int(method.split()[1][0]); matrix = bayer(n)
-        distances = ((a[:,:,None,:]-p)**2).sum(axis=3)
+        distances = delta_e_2000(linear_to_lab(a)[:,:,None,:],lab)
         first_index=distances.argmin(axis=2)
         yy,xx=np.indices((h,w))
         first=p[yy,xx,first_index]
@@ -347,20 +328,43 @@ def quantize(image, palette, method="None", strength=1, serpentine=False, cancel
         second_index=np.where(distinct,distances,np.inf).argmin(axis=2)
         second=p[yy,xx,second_index]
         direction = second-first
-        fraction = np.clip(((a-first)*direction).sum(axis=2)/np.maximum((direction*direction).sum(axis=2),1),0,1)
+        fraction = np.clip(((a-first)*direction).sum(axis=2)/np.maximum((direction*direction).sum(axis=2),1e-12),0,1)
         threshold = np.tile(matrix+.5, ((h+n-1)//n,(w+n-1)//n))[:h,:w]
         return np.where(fraction*strength>threshold,second_index,first_index).astype(np.uint8)
     if method not in KERNELS or strength == 0:
         check_cancel(cancel)
-        return ((a[:,:,None,:]-p)**2).sum(axis=3).argmin(axis=2).astype(np.uint8)
+        return delta_e_2000(linear_to_lab(a)[:,:,None,:],lab).argmin(axis=2).astype(np.uint8)
+    # Exact source black is an absorbing boundary when the local palette can
+    # reproduce it. Never let neighboring residuals paint into a black border.
+    black_entries=np.all(p==0,axis=3)
+    keep_black=np.all(a==0,axis=2)&black_entries.any(axis=2)
+    black_index=black_entries.argmax(axis=2)
+    # Discard source light outside the mixtures available at this pixel, before
+    # accumulating error. It cannot be recovered by flooding neighboring pixels.
+    a=diffusion_target(a,p,cancel)
     denom,kernel = KERNELS[method]
     out = np.empty((h,w), dtype=np.uint8)
+    # Collapse duplicate palette entries once; diffusion visits only distinct colors.
+    cache={}
     for y in range(h):
         check_cancel(cancel)
+        row_palettes=[]
+        for x in range(w):
+            key=lab[y,x].tobytes()
+            if key not in cache:
+                _,ix=np.unique(lab[y,x],axis=0,return_index=True);ix=np.sort(ix)
+                cache[key]=(ix,lab[y,x,ix].tolist())
+            row_palettes.append(cache[key])
         reverse = serpentine and y%2
         for x in (range(w-1,-1,-1) if reverse else range(w)):
-            old = np.clip(a[y,x], 0, 255)
-            idx = int(((p[y,x]-old)**2).sum(axis=1).argmin())
+            if keep_black[y,x]:
+                out[y,x]=black_index[y,x]
+                continue
+            # Keep signed accumulated error. Clipping it before subtracting the
+            # chosen color discards negative residuals and biases diffusion bright.
+            old = a[y,x].copy()
+            ix,entries=row_palettes[x]
+            idx = int(ix[nearest_linear(np.clip(old,0,1),entries)])
             out[y,x] = idx
             err = (old-p[y,x,idx])*strength/denom
             for dx,dy,weight in kernel:
@@ -371,7 +375,10 @@ def quantize(image, palette, method="None", strength=1, serpentine=False, cancel
 
 def frame_pixels(indices, codes, line_codes=(), mode=None):
     """Three interleaved on/off frames before bottom-up ROM packing."""
-    if mode in MODES[12:]:
+    if mode in MODES[17:20]:
+        from .extended import frames
+        return frames(indices,codes,line_codes,mode)
+    if mode in MODES[12:17]:
         from .twoframe import frames
         return frames(indices,codes,line_codes,mode)
     if mode==MODES[11]:
@@ -405,34 +412,30 @@ def representative_colors(image, count=8):
     chosen = [int(counts.argmax())]
     dist = np.full(len(colors), np.inf)
     for _ in range(min(count,len(colors))-1):
-        c = colors[chosen[-1]]; delta = colors-c; rmean = (colors[:,0]+c[0])/2
-        # Preserve the old representative-color distance, including its blue term.
-        d = (2+rmean/256)*delta[:,0]**2+4*delta[:,1]**2+2+(255-rmean)/256*delta[:,2]**2
+        d = distance(colors,colors[chosen[-1]])
         dist = np.minimum(dist,d); dist[chosen] = -1
         chosen.append(int(dist.argmax()))
     return colors[chosen]
 
 def _mixtures(batch):
-    c = TIA[np.asarray(batch)]
-    return np.rint((np.einsum("ij,bjk->bik",BITS.astype(np.float32),c[:,:3])+(3-BITS.sum(axis=1))[None,:,None]*c[:,3:4])/3).astype(np.float32)
+    c = srgb_to_linear(TIA[np.asarray(batch)])
+    return linear_to_srgb((np.einsum("ij,bjk->bik",BITS.astype(np.float32),c[:,:3])+(3-BITS.sum(axis=1))[None,:,None]*c[:,3:4])/3)
 
-def _score(batch, colors, weights=None, diversity=False,tone=None):
+def _score(batch, colors, weights=None, diversity=False):
     mix = _mixtures(batch)
-    if tone is None:
-        delta = mix[:,:,None,:]-colors[None,None,:,:]
-        loss=np.zeros((len(mix),3))
-    else:
-        adjusted,normalization,loss=_candidate_input(colors,mix,tone)
-        delta=(mix[:,:,None,:]-adjusted[:,None,:,:])/normalization[:,None,None,:]
+    # A fixed source reference prevents palette-dependent darkening from hiding
+    # error. Input controls are fitted explicitly by the joint optimizer.
+    distances = distance(mix[:,:,None,:],colors[None,None,:,:])
+    nearest=distances.min(axis=1)
     if weights is None:
-        distances = np.sqrt((delta*delta).sum(axis=3))
-        score = distances.min(axis=1).sum(axis=1)+np.sqrt(loss.sum(axis=1))*len(colors)
+        score=nearest.sum(axis=1)
         if diversity:
-            picked = distances.argmin(axis=1)
-            used = np.stack([(picked==i).any(axis=1) for i in range(8)],axis=1).sum(axis=1)
-            score = score*1000/used
+            picked=distances.argmin(axis=1)
+            used=np.stack([(picked==i).any(axis=1) for i in range(8)],axis=1).sum(axis=1)
+            score=score*1000/used
         return score
-    return ((delta*delta)*[.299,.587,.114]).sum(axis=3).min(axis=1) @ weights + loss @ np.array([.299,.587,.114])
+    return (nearest**2) @ weights
+
 
 def _legacy_component_ranges():
     """Compact traversal description: (component 1, component 2, fstart)."""
@@ -447,11 +450,10 @@ def _legacy_component_ranges():
     return ranges
 
 def optimize(image, settings, progress=lambda value,text: None, cancel=None):
-    """Search a prepared, un-toned image; auto_input tones each candidate separately."""
+    """Search the prepared image using the common fixed-reference DE00 objective."""
     s = settings.validate()
     backgrounds = {"Black":[0],"Black or white":[0,112],"Any Atari color":list(range(128))}[s.background]
     check_cancel(cancel)
-    tone=_input_tone_context(image) if s.auto_input else None
     if s.search == "Legacy exhaustive":
         colors = representative_colors(image)
         best, winner = float("inf"), None
@@ -471,7 +473,7 @@ def optimize(image, settings, progress=lambda value,text: None, cancel=None):
             if not items:break
             check_cancel(cancel)
             batch=np.array(items)
-            scores=_score(batch,colors,diversity=s.diversity,tone=tone);i=int(scores.argmin())
+            scores=_score(batch,colors,diversity=s.diversity);i=int(scores.argmin())
             if scores[i]<best:best,winner=float(scores[i]),batch[i].copy()
             done+=len(batch)
             if best==0:
@@ -500,9 +502,9 @@ def optimize(image, settings, progress=lambda value,text: None, cancel=None):
                     check_cancel(cancel)
                     allowed = range(128) if axis < 3 or s.background == "Any Atari color" else backgrounds
                     batch = np.tile(current,(len(allowed),1)); batch[:,axis] = list(allowed)
-                    scores = _score(batch,colors,weights,tone=tone); current = batch[int(scores.argmin())].copy()
+                    scores = _score(batch,colors,weights); current = batch[int(scores.argmin())].copy()
                 if np.array_equal(previous,current): break
-            score = float(_score([current],colors,weights,tone=tone)[0])
+            score = float(_score([current],colors,weights)[0])
             if score < best: best,winner = score,current.copy()
             progress((startno+1)/len(starts), "Improved weighted palette search")
     return tuple(CODES[int(i)] for i in winner), best

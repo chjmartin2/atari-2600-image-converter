@@ -1,6 +1,36 @@
-# Advanced image modes — 0.4.0
+# Advanced image modes — 0.5.0 development
 
-These modes are included in Atari 2600 Image Optimizer 0.4.0. Cartridge support is retrieved from upstream during setup; third-party driver bytes are not redistributed in this package.
+The three spatial modes below are local 0.5.0 development additions. The other advanced modes shipped in 0.4.0. Optional cartridge support is retrieved from upstream during setup; third-party driver bytes are not redistributed in this package.
+
+## New spatial modes
+
+| Mode | Image and constraints | Export |
+| --- | --- | --- |
+| Hybrid playfield + sprites — Static | 160 × 192 preview grid: 40 four-clock playfield cells, overlaid with two independently patterned eight-clock sprite windows. PF foreground/background vary per row; each sprite has one color and one horizontal position for the whole image. | 32 KB F4 ROM + self-contained DASM |
+| 96-pixel interleaved bitmap — Flicker | 96 × 192 samples across two fields. Each field displays six eight-pixel sprite copies, covering three alternating 16-pixel bands. One foreground and background per row, shared by both fields. | 32 KB F4 ROM + self-contained DASM |
+| Television interlace (experimental) — Flicker | 48 × 384 logical rows; each field draws 192 alternating rows using the existing six-strip sprite kernel. Foreground varies per logical row; background is shared. | 8 KB F8 ROM + self-contained DASM |
+
+### Hybrid detail placement
+
+The hybrid is a constrained overlay, not 160 freely colored pixels across every line. Colors optimization first fits the coarse playfield, then searches for two non-overlapping eight-pixel windows and constant sprite colors that reduce its residual error. Window 1 starts at x=32–144; window 2 at x=48–152 and to its right. Their selected locations are shown beneath the output. Crop/zoom helps put the interesting subject in this usable region. All dither choices operate on legal four-clock cells before fitting sprite overlays.
+
+Colors-only optimization may change these output windows and their colors. Image-only preserves them, along with all row palettes. Settings retain the four row colors followed by the two hexadecimal positions in each hybrid row record. The export validates those constraints. No manual window positioning is included in this version.
+
+### Wider bitmap and brightness
+
+The 96-pixel raster uses NUSIZ=6, three medium-spaced copies of each player. Its second field moves both players 16 clocks to fill the gaps. It occupies the center 96 of the television line's 160 color clocks. Inactive bands display the row background, so the optimizer scores `(foreground + background) / 2` for lit pixels, and the background itself for unlit pixels. This is fixed spatial interleaving; arbitrary phase balancing would break the cartridge layout. A bright background can reduce field contrast, with a corresponding loss of dark range.
+
+### Genuine vertical interlace
+
+Interlace alternates the vertical-sync edge between CPU cycle 3 and 41: a 38-cycle half-line offset. Successive sync edges are 19,950 CPU cycles apart, or **262.5 scanlines**. The full pair has 525 total lines and 384 image rows. This changes television field placement, unlike modes that only alternate colors on the same scanlines. The kernel is informed by Billy Eno and Glenn Saunders's [2002 interlace proof of concept](https://www.biglist.com/lists/stella/archives/200208/msg00110.html), with new field packing and the existing credited sprite kernel.
+
+The application preview places the two fields on alternate logical rows and uses an estimated temporal blend/persistence. Stella validates each 192-row field and the emitted sync timing; its captures are not proof of a particular television's interlacing or deinterlacing behavior. CRT, capture-device, modern-display and physical Harmony compatibility remain untested. This mode is deliberately marked experimental.
+
+### Validation and rebuilding
+
+`tests/test_extended_modes.py` checks legal conversion/dithering, saved settings, fixed-color input optimization, field coverage, malformed export rejection and DASM-to-BIN parity. `tests/gui_extended_smoke.py` exercises the GUI workflows for all three. `scripts/verify_stella_extended.py` compares every displayed pixel in consecutive fields, including hybrid positioning extremes and colored backgrounds; static/wide frames contain 262 lines and interlace alternates 262/263. `scripts/verify_interlace_sync.py` separately measures exact VSYNC edge spacing and half-line phases in Stella.
+
+The new kernels need no ARM driver or external assembler at runtime. Developers can rebuild the checked templates using `scripts/build_extended_templates.py <path-to-dasm>`. Templates are hashed and only their declared immediate/data operands are changed on export. Physical hardware validation remains a separate step.
 
 ## Implemented outputs
 
@@ -72,7 +102,9 @@ The CDFJ+ template does not include an explicit redistribution license, and DPC+
 
 ## Two-frame sprite modes — 0.4.0
 
-The five explicit `(2 frames)` selections preserve the original static choices. Each pixel chooses one of four combinations: foreground/foreground, foreground/background, background/foreground, background/background. Two Color uses two global foreground/background pairs. Scanline and ordinary multiplexed modes allow a foreground per row per frame. DPC+ and CDFJ+ additionally separate P0/P1 colors across their alternating strips. Each frame has its own shared background.
+The five explicit `(2 frames)` selections preserve the original static choices. Each pixel chooses one of four combinations: foreground/foreground, foreground/background, background/foreground, background/background. Two Color uses two global palettes. With frame balancing enabled (the default), its search requires a common background and the two palettes alternate A/B/A/B by scanline; the following frame reverses them. Pixel assignments are exchanged along with the palettes, preserving each pixel's exact temporal color sum. Identical palettes additionally allow checkerboard assignment of half-intensity pixels. This spreads the two images spatially rather than flashing one whole palette at a time; it cannot remove all flicker. Existing saved palettes with different backgrounds remain intact and show a prompt to optimize colors for the new shared-background constraint. Disabling balancing restores uniform frame assignment and permits independent backgrounds during palette search.
+
+Scanline and ordinary multiplexed modes allow a foreground per row per frame. DPC+ and CDFJ+ additionally separate P0/P1 colors across their alternating strips. Each frame has a spatially constant background. The Two Color change reuses the existing verified per-row foreground tables in the F8 kernel; it does not alter scanline timing.
 
 The two frames are fitted jointly to their actual average; they are not duplicate copies of a static image. Saved row palettes contain eight codes (four for A, four for B). The frame index map is 0–3. The background restriction applies to both frames.
 

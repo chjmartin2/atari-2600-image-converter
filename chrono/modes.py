@@ -1,10 +1,12 @@
 """Hardware-constrained palettes and conversion for all output modes."""
 from dataclasses import replace
 import numpy as np
+from .color import blend,distance,dim
 from .core import (Settings,MODES,PRESETS,CODES,TIA,prepare,target_palette,quantize,
                    hardware_palette,frame_pixels,optimize,check_cancel,_score)
 
 def normalize(s):
+    if s.mapping != "Temporal blend":s=replace(s,mapping="Temporal blend")
     if s.mode==MODES[7]:return replace(s,line_codes=(),mapping='Temporal blend',preset='Full NTSC palette')
     if s.mode==MODES[0]:
         return replace(s,codes=PRESETS['RGB (original Chronocolour)'],line_codes=(),mapping='Temporal blend',preset='RGB (original Chronocolour)')
@@ -13,7 +15,7 @@ def normalize(s):
     return s
 
 def render(indices,s):
-    return np.rint(np.mean(frame_pixels(indices,s.codes,s.line_codes,s.mode),axis=0)).astype(np.uint8)
+    return blend(frame_pixels(indices,s.codes,s.line_codes,s.mode))
 
 def convert_image(image,s,cancel=None):
     s=normalize(s)
@@ -22,6 +24,9 @@ def convert_image(image,s,cancel=None):
         s=search_palette(adjusted,s,cancel=cancel)
     from .temporal import canonicalize
     s=canonicalize(s)
+    if s.mode in MODES[17:20]:
+        from .extended import convert
+        return adjusted,convert(adjusted,s,cancel),s
     indices=quantize(adjusted,target_palette(s),s.dither,s.strength,s.serpentine,cancel)
     # Duplicate palette entries must never accidentally produce temporal shades.
     if s.mode in (MODES[2],*MODES[4:7],*MODES[8:12]):indices=np.where(indices==7,7,0).astype(np.uint8)
@@ -34,19 +39,22 @@ def backgrounds(s):
 
 def best_pair(pixels,bgs):
     # All foregrounds x allowed backgrounds; distances computed just once.
-    errors=((pixels[None,:,:]-TIA[:,None,:])**2 @ np.array([.299,.587,.114]))
+    errors=distance(pixels[None,:,:],TIA[:,None,:])**2
     scores=np.minimum(errors[:,None,:],errors[bgs][None,:,:]).mean(axis=2)
     fg,bg=np.unravel_index(scores.argmin(),scores.shape)
     return int(fg),bgs[bg]
 
 def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
     s=normalize(s);check_cancel(cancel)
+    if s.mode in MODES[17:20]:
+        from .extended import search
+        return search(adjusted,s,progress,cancel)
     if s.mode==MODES[7]:
         progress(1,'BUS uses all 128 NTSC colors; no restricted palette to search')
         return s
     if s.mode==MODES[0]:return s
     pixels=np.asarray(adjusted,dtype=np.float32)
-    if s.mode in MODES[12:]:
+    if s.mode in MODES[12:17]:
         from .twoframe import search
         return search(adjusted,s,progress,cancel)
     if s.mode in MODES[8:]:return search_sprite_palette(pixels,s,progress,cancel)
@@ -56,7 +64,7 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
         _,inv,count=np.unique(keys,axis=0,return_inverse=True,return_counts=True)
         colors=np.array([np.bincount(inv,weights=flat[:,c])/count for c in range(3)]).T
         weights=count/count.sum()
-        errors=((colors[None,:,:]-TIA[:,None,:])**2 @ np.array([.299,.587,.114]))
+        errors=distance(colors[None,:,:],TIA[:,None,:])**2
         bgs=backgrounds(s);best=(float('inf'),0,bgs[0])
         for fg in range(128):
             check_cancel(cancel)
@@ -88,7 +96,7 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
                 codes=(CODES[fg],)*3+(CODES[k],)
             else:
                 weights=np.full(len(row),1/len(row));best=float('inf');winner=None
-                nearest=((TIA[:,None,:]-row[None,:,:])**2).sum(axis=2).argmin(axis=0)
+                nearest=distance(TIA[:,None,:],row[None,:,:]).argmin(axis=0)
                 unique,counts=np.unique(nearest,return_counts=True)
                 dominant=list(unique[np.argsort(counts)[-3:]])
                 while len(dominant)<3:dominant.append(dominant[-1])
@@ -110,21 +118,21 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
     codes,_=optimize(adjusted,replace(s,auto_input=False),progress,cancel)
     return replace(s,codes=codes,line_codes=(),preset='Custom / optimized',mapping='Temporal blend')
 
-def search_sprite_palette(pixels,s,progress,cancel):
+def search_sprite_palette(pixels,s,progress,cancel,duty=1.):
     """Exhaustive foreground choices with a legal shared background.
 
     MovieCart: ten cells per row, averaging the complementary black field.
     Streamed sprites: P0/P1 colors shared across their three copies per row.
     Plain sprites: one foreground for the complete row.
     """
-    movie=s.mode==MODES[11];bgs=backgrounds(s);palette=TIA*(.5 if movie else 1)
+    movie=s.mode==MODES[11];bgs=backgrounds(s);palette=dim(TIA,.5 if movie else duty)
     choices=[];row_scores=[]
     for y,row in enumerate(pixels):
         check_cancel(cancel)
         groups=[row[k:k+8] for k in range(0,80,8)] if movie else [row[(np.arange(48)//8)%2==k] for k in range(2)] if s.mode in MODES[9:11] else [row]
         winners=[];scores=[]
         for group in groups:
-            errors=((palette[:,None,:]-group[None,:,:])**2)@np.array([.299,.587,.114])
+            errors=distance(palette[:,None,:],group[None,:,:])**2
             pair=np.minimum(errors[:,None,:],errors[bgs][None,:,:]).sum(axis=2)
             winners.append(pair.argmin(axis=0));scores.append(pair.min(axis=0))
         choices.append(winners);row_scores.append(np.sum(scores,axis=0))
