@@ -1,3 +1,13 @@
+# Atari 2600 Image Optimizer 0.5.1 — October 10, 2026
+
+- Adds the approved silver-and-color-pixel logo to the workbench and GitHub README.
+- Adds the matching Windows executable, taskbar and window icon.
+- Adds Help → About with the logo and application version.
+
+This branding update does not change conversion algorithms, settings or cartridge output. The portable Windows x64 and Python source packages include the artwork. Optional cartridge drivers remain separate; the Windows build is unsigned. Existing hardware-validation limits still apply.
+
+---
+
 # Atari 2600 Image Optimizer 0.5.0 — October 5, 2026
 
 A portable Windows x64 build now runs without a separate Python installation. Extract the whole Windows ZIP and launch the EXE; keep its `_internal` folder beside it. The source-and-launcher ZIP remains available.

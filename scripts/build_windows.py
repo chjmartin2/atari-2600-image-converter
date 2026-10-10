@@ -10,6 +10,8 @@ output.mkdir(parents=True,exist_ok=True)
 name='Atari-2600-Image-Optimizer'
 args=[sys.executable,'-m','PyInstaller','--noconfirm','--windowed','--onedir','--noupx',
       '--name',name,'--distpath',str(output/'dist'),'--workpath',str(output/'work'),'--specpath',str(output)]
+args+=['--icon',str(root/'chrono/resources/branding/app.ico'),
+       '--add-data',str(root/'chrono/resources/branding')+':chrono/resources/branding']
 for path in sorted((root/'chrono/resources').iterdir()):
     if path.suffix not in ('.asm','.bin','.json'):continue
     if path.name.endswith('-driver.bin') or (path.suffix=='.asm' and path.stem in TEMPLATES):continue

@@ -21,6 +21,7 @@ from .modes import normalize,search_palette,convert_image,render
 from .optimization import joint_optimize,fit_controls
 from .rom import assembly, binary
 from .animation import AnimatedPreview
+from .branding import photo as brand_photo, install_window_icon
 
 BG, PANEL, TEXT, MUTED, CYAN, PINK = "#10151c", "#1b2430", "#e1e8ef", "#98abba", "#59d5e7", "#ee7caf"
 
@@ -102,7 +103,11 @@ class Preview(ttk.Frame):
 
 class App(tk.Tk):
     def __init__(self, initial=None):
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("RetroComputerist.Atari2600ImageOptimizer")
         super().__init__()
+        install_window_icon(self)
         self.title(f"Atari 2600 Image Optimizer {__version__}")
         self.geometry("1320x850"); self.minsize(1000,700); self.configure(bg=BG)
         self.settings = Settings(); self.source = sample_image(); self.source_path = None
@@ -120,6 +125,23 @@ class App(tk.Tk):
         self.after(80,self._poll)
         if initial:self.open_image(initial)
         else:self.convert()
+
+    def show_about(self):
+        if getattr(self, 'about_window', None) is not None and self.about_window.winfo_exists():
+            self.about_window.lift()
+            return
+        dialog=tk.Toplevel(self)
+        self.about_window=dialog
+        dialog.title("About Atari 2600 Image Optimizer")
+        dialog.configure(bg=BG)
+        dialog.resizable(False,False)
+        dialog.transient(self)
+        dialog.logo=brand_photo('logo.png',(600,200),dialog)
+        tk.Label(dialog,image=dialog.logo,bg=BG,borderwidth=0).pack(padx=20,pady=(20,10))
+        ttk.Label(dialog,text=f"Version {__version__} · The RetroComputerist").pack(pady=6)
+        ttk.Label(dialog,text="An NTSC Atari 2600 image-conversion workbench.").pack(pady=6)
+        ttk.Button(dialog,text="Close",command=dialog.destroy).pack(pady=(10,20))
+        dialog.bind('<Escape>',lambda event:dialog.destroy())
 
     def _style(self):
         st = ttk.Style(self); st.theme_use("clam")
@@ -149,9 +171,14 @@ class App(tk.Tk):
                               ('Export animated preview…',self.export_animated_preview),
                               ('Save frame GIF…',self.save_gif),('Locate / change Stella…',self.locate_stella)]:
             file_menu.add_command(label=title,command=command)
-        menu.add_cascade(label='File',menu=file_menu);self.configure(menu=menu)
+        menu.add_cascade(label='File',menu=file_menu)
+        help_menu=tk.Menu(menu,tearoff=False)
+        help_menu.add_command(label='About Atari 2600 Image Optimizer',command=self.show_about)
+        menu.add_cascade(label='Help',menu=help_menu);self.configure(menu=menu)
         header=ttk.Frame(self,padding=(18,10));header.pack(fill='x')
-        ttk.Label(header,text='ATARI 2600 IMAGE OPTIMIZER',style='Title.TLabel').pack(side='left')
+        self.brand_logo=brand_photo('logo.png',(240,80),self)
+        self.brand_label=tk.Label(header,image=self.brand_logo,bg=BG,borderwidth=0)
+        self.brand_label.pack(side='left')
         ttk.Button(header,text='Open image…',command=self.open_image,style='Accent.TButton').pack(side='right')
         ttk.Button(header,text='Reset all options',command=self.reset_all_options).pack(side='right',padx=8)
         self.file_label=ttk.Label(self,text='Built-in calibration image',style='Muted.TLabel',padding=(20,0));self.file_label.pack(anchor='w')

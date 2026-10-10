@@ -1,12 +1,16 @@
 # Atari 2600 Image Optimizer
 
+![Atari 2600 Image Optimizer](chrono/resources/branding/logo.png)
+
 A Python desktop workbench for turning pictures into **NTSC Atari 2600 cartridge images**. This continues Chris Martin's 2011 Chrono2 converter, using Andrew Davie's original Interleaved Chronocolour display kernel and separate new scanline kernels.
 
 The **0.5.0 release** simplifies the GUI, adds source crop zoom, and provides twenty output modes. All modes now share linear-light blending and CIEDE2000 color matching. New choices are **Hybrid playfield + sprites — Static**, **96-pixel interleaved bitmap — Flicker**, and **Television interlace (experimental) — Flicker**. See [ADVANCED-MODES.md](ADVANCED-MODES.md) for formats, hardware limits, provenance, verification and the proposed ultimate-mode design.
 
+Version **0.5.1** adds the shared logo and Windows icon to the workbench and About window. Image conversion and output formats are unchanged.
+
 ## Run
 
-**Windows standalone:** download `Atari-2600-Image-Optimizer-v0.5.0-Windows-x64.zip`, extract the entire folder, and run `Atari-2600-Image-Optimizer.exe`. Keep `_internal` alongside the EXE. Python and the image libraries are included; no Python installation is required. This is an unsigned portable Windows x64 build.
+**Windows standalone:** download `Atari-2600-Image-Optimizer-v0.5.1-Windows-x64.zip`, extract the entire folder, and run `Atari-2600-Image-Optimizer.exe`. Keep `_internal` alongside the EXE. Python and the image libraries are included; no Python installation is required. This is an unsigned portable Windows x64 build.
 
 BUS, DPC+ and CDFJ+ exports need their optional upstream cartridge support. Run the included **Setup cartridge support.cmd**, then click **Download cartridge support** once. The pinned files are checksum-verified and cached under `%LOCALAPPDATA%/RetroComputerist/Atari2600ImageOptimizer/drivers`. Other modes and previews work offline immediately. Stella is a separate installation.
 
