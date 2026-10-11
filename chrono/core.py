@@ -34,16 +34,24 @@ KERNELS = {
     "Burkes": (32, [(1,0,8),(2,0,4),(-2,1,2),(-1,1,4),(0,1,8),(1,1,4),(2,1,2)]),
 }
 DITHERS = ["None", "Ordered 2×2", "Ordered 4×4", "Ordered 8×8", *KERNELS]
-MODES = ['Chronocolor classic','Chronocolor custom','Two Color','Chronocolor per line','Scanline color','No flicker — playfield','Playfield Plus','Bus stuffing (experimental)', 'Multiplexed sprites', 'DPC+ sprites', 'CDFJ+ sprites', 'MovieCart frame', 'Two Color (2 frames)', 'Scanline color (2 frames)', 'Multiplexed sprites (2 frames)', 'DPC+ sprites (2 frames)', 'CDFJ+ sprites (2 frames)', 'Hybrid playfield + sprites', '96-pixel interleaved bitmap', 'Television interlace (experimental)']
+SEARCHES = ["Weighted eight-color"]
+LEGACY_SEARCHES = ["Indexed perceptual", "Exhaustive black background", "Improved weighted", "Legacy exhaustive"]
+MODES = ['Chronocolor classic','8 color mode','Two Color','8 color per line mode','Scanline color','No flicker — playfield','Playfield Plus','Bus Stuffing - 16x192 Color Raster', 'Multiplexed sprites', 'DPC+ sprites', 'CDFJ+ sprites', 'MovieCart frame', 'Two Color (2 frames)', 'Scanline color (2 frames)', 'Multiplexed sprites (2 frames)', 'DPC+ sprites (2 frames)', 'CDFJ+ sprites (2 frames)', 'Hybrid playfield + sprites', '96-pixel interleaved bitmap', 'Television interlace (experimental)', 'Bus Stuffing - 128x200 Single Color']
+BUS128=MODES[20]
+MODES.append('Bus Stuffing - 128x200 Color per Line')
+BUS128LINE=MODES[21]
+MODE_CHOICES=MODES[:8]+[BUS128,BUS128LINE]+MODES[8:20]
 
 def frame_count(mode):
-    return 2 if mode in (*MODES[11:17],*MODES[18:20]) else 3 if mode in (MODES[0],MODES[1],MODES[3]) else 1
+    return 2 if mode in (*MODES[11:17],*MODES[18:20],BUS128,BUS128LINE) else 3 if mode in (MODES[0],MODES[1],MODES[3]) else 1
 
 def mode_description(mode):
     return mode + (' — Flicker' if frame_count(mode)>1 else ' — Static')
 
 
 def dimensions(s):
+    if s.mode in MODES[1:5]:return (48,s.height)
+    if s.mode in (BUS128,BUS128LINE):return (128,200)
     if s.mode in MODES[17:20]:return {MODES[17]:(160,192),MODES[18]:(96,192),MODES[19]:(48,384)}[s.mode]
     if s.mode in MODES[12:17]:return (48,128) if s.mode in MODES[12:14] else (48,192)
     if s.mode==MODES[7]:return (16,192)
@@ -52,15 +60,22 @@ def dimensions(s):
     return (40,192) if s.mode in MODES[5:] else (48,128)
 
 def cartridge_type(mode):
+    if isinstance(mode,Settings):
+        if mode.mode==MODES[3] and len({r[3] for r in mode.line_codes})>1:return "EF"
+        if mode.height==192 and mode.mode in (MODES[1],MODES[3]):return "F6"
+        mode=mode.mode
+    if mode==MODES[4]:return "F6"
+    if mode in (BUS128,BUS128LINE):return "BUS"
     if mode in MODES[17:20]:return "F8" if mode==MODES[19] else "F4"
     if mode in MODES[12:17]:return "F8" if mode in MODES[12:15] else "DPC+" if mode==MODES[15] else "CDF"
     if mode in MODES[9:]:return {MODES[9]:'DPC+',MODES[10]:'CDF',MODES[11]:'MVC'}[mode]
     return 'BUS' if mode==MODES[7] else 'F6' if mode==MODES[6] else '4K'
 
 def cartridge_size(mode):
-    return {'F4':32768,'F8':8192,'BUS':32768,'F6':16384,'4K':4096,'DPC+':32768,'CDF':32768,'MVC':30*60*4096}[cartridge_type(mode)]
+    return {'EF':65536,'F4':32768,'F8':8192,'BUS':32768,'F6':16384,'4K':4096,'DPC+':32768,'CDF':32768,'MVC':30*60*4096}[cartridge_type(mode)]
 
 def display_aspect(s):
+    if s.mode in (BUS128,BUS128LINE):return "Raw pixels" if s.aspect=="Raw pixels" else "BUS bitmap"
     if s.mode in MODES[17:20]:return "Raw pixels" if s.aspect=="Raw pixels" else {MODES[17]:"Display 4:3",MODES[18]:"Wide raster",MODES[19]:"Sprite raster"}[s.mode]
     if s.mode in MODES[12:14]:return s.aspect
     if s.mode in MODES[14:17]:return "Raw pixels" if s.aspect=="Raw pixels" else "Sprite raster"
@@ -69,7 +84,8 @@ def display_aspect(s):
 
 @dataclass
 class Settings:
-    mode: str = 'Chronocolor custom'
+    mode: str = '8 color mode'
+    height: int = 128
     line_codes: tuple = ()
     scale: str = "Fill / crop"
     resample: str = "Lanczos"
@@ -78,6 +94,10 @@ class Settings:
     crop_y: float = .5
     crop_zoom: float = 1.0
     brightness: float = 1.0
+    brightness_trim: float = 1.0
+    red_offset: float = 0.0
+    green_offset: float = 0.0
+    blue_offset: float = 0.0
     contrast: float = 1.0
     saturation: float = 1.0
     gamma: float = 1.0
@@ -93,16 +113,32 @@ class Settings:
     preset: str = "RGB (original Chronocolour)"
     codes: tuple = ("42", "C6", "74", "00")
     mapping: str = "Temporal blend"
-    search: str = "Improved weighted"
+    search: str = SEARCHES[0]
     background: str = "Black"
+    bus_pair_rows: bool = False
     diversity: bool = False
     auto_input: bool = False
     flicker_aware: bool = True
     balance_frames: bool = True
-    optimization_scope: str = 'Image + colors'
-    search_effort: str = 'Standard'
+    optimization_scope: str = 'Colors only'
+    search_effort: str = 'Thorough'
 
     def validate(self):
+        if type(self.height) is not int or self.height not in (128,192):
+            raise ValueError("Choose a raster height of 128 or 192")
+        for offset in (self.red_offset,self.green_offset,self.blue_offset):
+            if not np.isfinite(offset) or not -765 <= offset <= 255:
+                raise ValueError("Fitted RGB offset must be between -765 and 255")
+        if not np.isfinite(self.brightness_trim) or not .25 <= self.brightness_trim <= 1.5:
+            raise ValueError("Brightness trim must be between 0.25 and 1.50")
+        if not isinstance(self.bus_pair_rows,bool):raise ValueError("Paired row colors must be on or off")
+        if self.mode==BUS128 and self.line_codes:raise ValueError("BUS single color does not use scanline palettes")
+        if self.mode==BUS128LINE and self.line_codes:
+            from .bus128_line_rom import rows_for
+            rows_for(self.codes,self.line_codes)
+            if self.bus_pair_rows:
+                from .bus128_pairs import distinct_rows
+                if not distinct_rows(self.line_codes):raise ValueError("Paired rows require two different foreground colors, both different from the background")
         if self.mode not in MODES:raise ValueError('Unknown output mode')
         if self.optimization_scope not in ('Image + colors','Image only','Colors only'):
             raise ValueError('Unknown optimization scope')
@@ -124,9 +160,9 @@ class Settings:
             if self.mode==MODES[11] and (any(c!='00' for r in (self.line_codes[0],self.line_codes[-1]) for c in r) or self.line_codes[1][-1]!='00'):
                 raise ValueError('MovieCart requires black boundary rows and the first content-row background')
             if self.mode not in (*MODES[3:7],*MODES[8:]):raise ValueError('This mode does not use scanline palettes')
-            if self.mode in (*MODES[3:5],*MODES[8:11]) and len({row[3] for row in self.line_codes})!=1:raise ValueError('The sprite kernel requires a constant background')
+            if self.mode in tuple(MODES[8:11]) and len({row[3] for row in self.line_codes})!=1:raise ValueError('The sprite kernel requires a constant background')
             if self.mode in (*MODES[4:6],MODES[8]) and any(row[0]!=row[1] or row[1]!=row[2] for row in self.line_codes):raise ValueError('Static scanlines require one foreground color')
-        choices = {"scale": ["Fit", "Fill / crop", "Stretch"], "resample": FILTERS, "aspect": ["Atari pixels 2:1", "Display 4:3", "Raw pixels"], "dither": DITHERS, "mapping": ["Temporal blend", "Legacy RGB targets"], "search": ["Improved weighted", "Legacy exhaustive"], "background": ["Black", "Black or white", "Any Atari color"], "rotate": [0,90,180,270]}
+        choices = {"scale": ["Fit", "Fill / crop", "Stretch"], "resample": FILTERS, "aspect": ["Atari pixels 2:1", "Display 4:3", "Raw pixels"], "dither": DITHERS, "mapping": ["Temporal blend", "Legacy RGB targets"], "search": SEARCHES + LEGACY_SEARCHES, "background": (["Black", "White", "Black or white", "Any Atari color", "Per line"] if self.mode==MODES[4] else ["Black", "Black or white", "Any Atari color", "Any color by line"] if self.mode==MODES[3] else ["Black", "Black or white", "Any Atari color"]), "rotate": [0,90,180,270]}
         for name, allowed in choices.items():
             if getattr(self, name) not in allowed:
                 raise ValueError(f"Invalid {name}: {getattr(self,name)}")
@@ -152,7 +188,12 @@ class Settings:
         if data.get("schema") != 1:
             raise ValueError("Unsupported settings version")
         values=data['settings']
+        aliases={'Chronocolor custom':MODES[1],'Chronocolor per line':MODES[3]}
+        if values.get('mode') in aliases:values['mode']=aliases[values['mode']]
+        if values.get('mode')=='Bus stuffing (experimental)':values['mode']=MODES[7]
         values['mapping']='Temporal blend'
+        if values.get('mode',MODES[1])==MODES[1] and values.get('search') in LEGACY_SEARCHES:
+            values['search']=SEARCHES[0]
         if 'codes' in values:values['codes']=tuple(values['codes'])
         if 'line_codes' in values:values['line_codes']=tuple(tuple(row) for row in values['line_codes'])
         return cls(**values).validate()
@@ -176,18 +217,20 @@ def prepare(image, settings, apply_auto=True):
     return _adjust_image(_geometry(image,s),s).resize(dimensions(s),FILTERS[s.resample])
 
 def geometry_target(size,s):
+    if s.mode in (BUS128,BUS128LINE):return (128,200) if s.aspect=="Raw pixels" else (256,200)
     if s.mode in MODES[17:20]:
         return dimensions(s) if s.aspect=="Raw pixels" else {MODES[17]:(512,384),MODES[18]:(384,384),MODES[19]:(192,384)}[s.mode]
     if s.mode in MODES[12:17]:
         from .twoframe import BASES
-        return geometry_target(size,replace(s,mode=BASES[s.mode],line_codes=()))
+        return geometry_target(size,replace(s,mode=BASES[s.mode],height=128,line_codes=()))
     if s.mode in MODES[8:]:
         w,h=dimensions(s);return (w,h) if s.aspect=='Raw pixels' else (w*2,h)
     if s.mode==MODES[7]:return (16,192) if s.aspect=='Raw pixels' else (576,480)
     if s.mode in MODES[5:]:
         return {'Atari pixels 2:1':(512,384),'Display 4:3':(512,384),'Raw pixels':(40,192)}[s.aspect]
-    if size == (48,128):return (48,128)
-    return {"Atari pixels 2:1": (384,512), "Display 4:3": (512,384), "Raw pixels": (48,128)}[s.aspect]
+    w,h=dimensions(s)
+    if size == (w,h):return (w,h)
+    return {"Atari pixels 2:1": (w*8,h*4), "Display 4:3": (512,384), "Raw pixels": (w,h)}[s.aspect]
 
 def crop_bounds(size,s):
     """Source-space selection after rotation/mirroring; Stretch never locks aspect."""
@@ -241,14 +284,17 @@ def _adjust_image(im,s):
     for enhancer, factor in [(ImageEnhance.Brightness,s.brightness),(ImageEnhance.Contrast,s.contrast),(ImageEnhance.Color,s.saturation),(ImageEnhance.Sharpness,s.sharpness)]:
         im = enhancer(im).enhance(factor)
     a = np.asarray(im, dtype=np.float32) / 255
-    a = np.clip(a * [s.red,s.green,s.blue], 0, 1) ** (1/s.gamma)
+    a = np.clip(a * [s.red,s.green,s.blue] + np.array([s.red_offset,s.green_offset,s.blue_offset])/255., 0, 1) ** (1/s.gamma)
+    # Exposure trim: after the other controls, before quantization.
+    # Fixed for Colors only / Image only; searchable for Image + colors.
+    a = np.clip(a * s.brightness_trim, 0, 1)
     return Image.fromarray(np.uint8(np.rint(a*255)))
 
 def optimize_input(image,settings,progress=lambda value,text:None,cancel=None):
     """Compatibility entry point for the shared visible-control optimizer."""
     from .optimization import fit_controls
     progress(0,'Matching input to the current palette with CIEDE2000')
-    result=fit_controls(image,settings,cancel=cancel)
+    result=fit_controls(image,settings,cancel=cancel,progress=progress)
     progress(1,'Input matching complete')
     return result
 
@@ -258,6 +304,12 @@ def hardware_palette(codes):
     return linear_to_srgb((BITS @ colors[:3] + (3-BITS.sum(axis=1))[:,None]*colors[3])/3)
 
 def target_palette(settings):
+    if settings.mode==BUS128LINE:
+        from .bus128_line import palette
+        return palette(settings)
+    if settings.mode==BUS128:
+        from .bus128 import palette
+        return palette(settings)
     if settings.mode in MODES[17:20]:
         from .extended import palette
         return palette(settings)
@@ -375,6 +427,12 @@ def quantize(image, palette, method="None", strength=1, serpentine=False, cancel
 
 def frame_pixels(indices, codes, line_codes=(), mode=None):
     """Three interleaved on/off frames before bottom-up ROM packing."""
+    if mode==BUS128LINE:
+        from .bus128_line import frames
+        return frames(indices,codes,line_codes)
+    if mode==BUS128:
+        from .bus128 import frames
+        return frames(indices,codes)
     if mode in MODES[17:20]:
         from .extended import frames
         return frames(indices,codes,line_codes,mode)
@@ -417,9 +475,23 @@ def representative_colors(image, count=8):
         chosen.append(int(dist.argmax()))
     return colors[chosen]
 
-def _mixtures(batch):
+def _mixtures_direct(batch):
     c = srgb_to_linear(TIA[np.asarray(batch)])
     return linear_to_srgb((np.einsum("ij,bjk->bik",BITS.astype(np.float32),c[:,:3])+(3-BITS.sum(axis=1))[None,:,None]*c[:,3:4])/3)
+
+def _mixtures(batch):
+    """Look up legal three-field mixtures; only the build tool computes them."""
+    from .indexed_search import get_catalog
+    catalog=get_catalog()
+    # Reduced developer/test catalogs intentionally omit most cube entries.
+    # Normal application catalogs always use the complete bundled lookup.
+    if len(catalog.allowed)!=128:return _mixtures_direct(batch)
+    a,b,c,bg=np.asarray(batch,dtype=np.intp).T
+    cube=catalog.blend_cube
+    ids=np.column_stack((cube[a,b,c],cube[a,bg,bg],cube[b,bg,bg],cube[c,bg,bg],
+                         cube[a,b,bg],cube[a,c,bg],cube[b,c,bg],cube[bg,bg,bg]))
+    return catalog.rgb[ids]
+
 
 def _score(batch, colors, weights=None, diversity=False):
     mix = _mixtures(batch)
@@ -450,10 +522,22 @@ def _legacy_component_ranges():
     return ranges
 
 def optimize(image, settings, progress=lambda value,text: None, cancel=None):
+    """Custom always uses weighted eight-color search; historical engines are internal only."""
+    s=settings.validate();check_cancel(cancel)
+    if s.mode==MODES[1]:
+        from .weighted_search import search
+        return search(image,replace(s,search=SEARCHES[0]),progress,cancel)
+    return optimize_legacy(image,s,progress,cancel)
+
+
+def optimize_legacy(image, settings, progress=lambda value,text: None, cancel=None):
     """Search the prepared image using the common fixed-reference DE00 objective."""
     s = settings.validate()
     backgrounds = {"Black":[0],"Black or white":[0,112],"Any Atari color":list(range(128))}[s.background]
     check_cancel(cancel)
+    if s.search == "Exhaustive black background":
+        from .exhaustive_black import search
+        return search(image,replace(s,background="Black"),progress,cancel)
     if s.search == "Legacy exhaustive":
         colors = representative_colors(image)
         best, winner = float("inf"), None

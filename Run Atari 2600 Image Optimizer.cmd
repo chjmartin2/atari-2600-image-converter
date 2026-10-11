@@ -8,6 +8,12 @@ if not exist ".venv\Scripts\python.exe" (
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt
   if errorlevel 1 goto failed
 )
+".venv\Scripts\python.exe" -c "import scipy.spatial" >nul 2>&1
+if errorlevel 1 (
+  echo Updating image-search dependencies...
+  ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+  if errorlevel 1 goto failed
+)
 ".venv\Scripts\python.exe" scripts\setup_cartridge_support.py
 if errorlevel 1 echo Optional cartridge support setup failed. Other modes remain available; rerun Setup cartridge support.cmd later.
 ".venv\Scripts\python.exe" run.py %*

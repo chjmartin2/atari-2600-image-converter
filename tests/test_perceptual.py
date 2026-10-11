@@ -19,21 +19,24 @@ class PerceptualTests(unittest.TestCase):
         for value in (0,128,255):
             self.assertGreater(perceptual_score(ref,np.full_like(ref,value)),good*2)
 
-    def test_joint_cycles_visible_controls_and_keeps_best(self):
-        s=Settings(auto_input=True,dither='None',flicker_aware=False);passes=[]
+    def test_joint_fits_once_and_preserves_tonal_detail(self):
+        s=Settings(search='Improved weighted',auto_input=True,dither='None',flicker_aware=False);passes=[]
         a,i,start=convert_image(self.image,s)
         ref=prepare(self.image,replace(s,brightness=1,contrast=1))
         initial=perceptual_score(ref,render(i,start))
         winner=joint_optimize(self.image,s,iteration=lambda a,i,s,score:passes.append((s,score)))
         a,i,final=convert_image(self.image,winner)
-        self.assertGreaterEqual(len(passes),2)
-        self.assertLessEqual(perceptual_score(ref,render(i,final)),initial+1e-9)
+        self.assertEqual(len(passes),1)
+        target=prepare(self.image,final)
+        output=render(i,final)
+        for value in (0,128,255):
+            self.assertLess(perceptual_score(target,output),perceptual_score(target,np.full_like(output,value)))
         self.assertGreater(len(np.unique(i)),1)
         off=replace(final,auto_input=False)
         np.testing.assert_array_equal(prepare(self.image,final),prepare(self.image,off))
 
     def test_global_keeps_detail_and_cancels(self):
-        s=Settings(dither='None');winner=joint_optimize(self.image,s,global_search=True)
+        s=Settings(search='Improved weighted',dither='None');winner=joint_optimize(self.image,s,global_search=True)
         a,i,final=convert_image(self.image,winner)
         self.assertGreater(len(np.unique(i)),1)
         self.assertGreater(np.std(render(i,final)),15)

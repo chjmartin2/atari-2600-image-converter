@@ -14,8 +14,8 @@ class JointOptimizationTests(unittest.TestCase):
         for search in ('Legacy exhaustive','Improved weighted'):
             with patch.object(core,'_legacy_component_ranges',return_value=[(127,64,1)]):
                 s=core.Settings(search=search,background='Any Atari color')
-                a=core.optimize(self.image,s)
-                b=core.optimize(self.image,replace(s,auto_input=True))
+                a=core.optimize_legacy(self.image,s)
+                b=core.optimize_legacy(self.image,replace(s,auto_input=True))
             self.assertEqual(a,b)
 
     def test_detail_penalty_rejects_collapsed_black_palette(self):
@@ -36,7 +36,8 @@ class JointOptimizationTests(unittest.TestCase):
             old=asdict(s);old.pop('auto_input');p.write_text(json.dumps({'schema':1,'settings':old}))
             self.assertFalse(core.Settings.load(p).auto_input)
         self.assertEqual(core.Settings().scale,'Fill / crop')
-        self.assertEqual(core.Settings().search,'Improved weighted')
+        self.assertEqual(core.Settings().search,'Weighted eight-color')
+        self.assertEqual(core.Settings().optimization_scope,'Colors only')
         self.assertEqual(core.Settings().background,'Black')
 
     def test_fitted_controls_persist_off_and_refit_for_current_palette(self):

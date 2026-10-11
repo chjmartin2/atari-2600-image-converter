@@ -4,19 +4,23 @@
 
 A Python desktop workbench for turning pictures into **NTSC Atari 2600 cartridge images**. This continues Chris Martin's 2011 Chrono2 converter, using Andrew Davie's original Interleaved Chronocolour display kernel and separate new scanline kernels.
 
-The **0.5.0 release** simplifies the GUI, adds source crop zoom, and provides twenty output modes. All modes now share linear-light blending and CIEDE2000 color matching. New choices are **Hybrid playfield + sprites — Static**, **96-pixel interleaved bitmap — Flicker**, and **Television interlace (experimental) — Flicker**. See [ADVANCED-MODES.md](ADVANCED-MODES.md) for formats, hardware limits, provenance, verification and the proposed ultimate-mode design.
-
-Version **0.5.1** adds the shared logo and Windows icon to the workbench and About window. Image conversion and output formats are unchanged.
+Version **0.6.0** provides 22 NTSC display modes, including 128×200 BUS bitmaps,
+48×192 options, and per-row foreground/background fitting. The flexible
+three-frame modes are now **8 color mode** and **8 color per line mode**; the
+original Chronocolor Classic remains available. Palette tables are prebuilt,
+and the workbench separates Colors only, Image only, and Image + colors.
+See [RELEASE-NOTES.md](RELEASE-NOTES.md) for the full changes and validation limits.
+The [Demo Output](Demo%20Output/) folder contains the supplied example cartridge ZIP.
 
 ## Run
 
-**Windows standalone:** download `Atari-2600-Image-Optimizer-v0.5.1-Windows-x64.zip`, extract the entire folder, and run `Atari-2600-Image-Optimizer.exe`. Keep `_internal` alongside the EXE. Python and the image libraries are included; no Python installation is required. This is an unsigned portable Windows x64 build.
+**Windows standalone:** download `Atari-2600-Image-Optimizer-v0.6.0-Windows-x64.zip`, extract the entire folder, and run `Atari-2600-Image-Optimizer.exe`. Keep `_internal` alongside the EXE. Python and the image libraries are included; no Python installation is required. This is an unsigned portable Windows x64 build.
 
 BUS, DPC+ and CDFJ+ exports need their optional upstream cartridge support. Run the included **Setup cartridge support.cmd**, then click **Download cartridge support** once. The pinned files are checksum-verified and cached under `%LOCALAPPDATA%/RetroComputerist/Atari2600ImageOptimizer/drivers`. Other modes and previews work offline immediately. Stella is a separate installation.
 
 **Python source package:**
 
-On Windows, double-click **Run Atari 2600 Image Optimizer.cmd**. Python 3.12 or newer with Tkinter is required. The first run creates `.venv`, installs NumPy and Pillow, and retrieves BUS, DPC+ and CDFJ+ cartridge support directly from the original upstream sources. These downloads require Internet access and are verified against pinned checksums. Later runs use the cached support files. No external assembler is required for export. The Source ZIP is for Python users; the separate Windows x64 ZIP includes the runtime.
+On Windows, double-click **Run Atari 2600 Image Optimizer.cmd**. Python 3.12 or newer with Tkinter is required. The first run creates `.venv`, installs NumPy, Pillow and SciPy, and retrieves BUS, DPC+ and CDFJ+ cartridge support directly from the original upstream sources. These downloads require Internet access and are verified against pinned checksums. Later runs use the cached support files. No external assembler is required for export. The Source ZIP is for Python users; the separate Windows x64 ZIP includes the runtime.
 
 Alternatively:
 
@@ -44,6 +48,8 @@ Pass an image path to `run.py` or drop it onto the launcher. The application sta
 
 Drag **Adjusted input** to reposition the selection. **Center** centers the current selection; **Reset crop** returns to 1× and centers it. Opening another image resets the crop. **Reset image adjustments** resets tone/RGB/sharpness without losing the crop. **Original input** shows the full unadjusted source for reference; switch back to Adjusted input to drag the crop.
 
+**View size → Pixel-perfect fit** uses whole screen-pixel blocks and nearest-neighbor display, so resizing cannot give neighboring image pixels different widths or heights. Smooth display is disabled in this view; its previous preference returns with other zoom choices. Atari 2:1 and raw-pixel geometry retain their exact pixel shape. Geometry requiring large fractional ratios, such as the 4:3 view of a 48×128 image, uses a nearby integer shape when necessary; the preview labels the approximation. Very small windows or large original images scroll instead of shrinking pixels. Windows starts with per-monitor DPI awareness to avoid a second bitmap-scaling step by the operating system. This affects preview display only.
+
 **View size** magnifies the on-screen preview only; it does not change the exported image. Shift-drag pans the enlarged input view. Output dragging also pans. Original input, adjusted input and Atari output are separate views. Comparing before optimization is read-only: exports always use the current result unless Undo restores the earlier conversion.
 
 ### Optimization scope
@@ -56,9 +62,11 @@ Drag **Adjusted input** to reposition the selection. **Center** centers the curr
 
 Picking a preset or applying manual colors selects **Image only**, so the next optimization respects that choice. Switching explicitly to a scope containing colors permits replacement. Classic RGB and BUS offer Image only because their available color sets are fixed. RGB colors stay fixed in Classic mode.
 
-**Original Chronocolor / Classic RGB image optimization sets brightness to 0.47.** This is the owner's selected preset, not an automatic search result. Contrast, input gamma, saturation, RGB balance, sharpness and crop retain your settings. It sets an absolute value rather than multiplying the current brightness, and you can still adjust brightness manually afterward. Search effort is disabled for Classic; temporal scoring does not alter this preset. Every other mode retains its existing optimizer. All modes still share linear-light rendering and CIEDE2000 color matching.
+**Original Chronocolor / Classic RGB retains your image adjustments when selected.** Click Optimize to run its brightness-only search. Each candidate uses your selected dithering and the actual eight simulated temporal mixtures. Scoring compares relative perceptual lightness, local detail at several scales, and detail lost into black or the brightest mixture. Output light is normalized by the fixed palette ceiling, never by the candidate image's own brightness. The reference uses brightness 1.0 with your other adjustments retained. The search includes the current setting, 0.47 and 0.54, then refines the best regions; it is a bounded search, not a guarantee of a global perceptual optimum. Contrast, input gamma, saturation, RGB balance, sharpness, crop, and dithering are unchanged. Manual brightness edits remain available and do not trigger another search. Search effort is disabled for Classic, and the flicker switch does not add another adjustment. Other modes retain their existing optimizer. All modes still share linear-light rendering and CIEDE2000 color matching.
 
-The old Optimize input checkbox and Global optimize button are replaced by this scope selector and **Search effort: Standard / Thorough** under Advanced search. Thorough adds image-fit refinement sweeps and joint passes; custom Chronocolor also tries multiple starting palettes. Colors-only uses the mode's selected palette algorithm, so effort is disabled for that scope. Legacy exhaustive and Improved weighted remain available for custom Chronocolor, with background constraints and legacy diversity. Searches are bounded heuristics, not guarantees of a subjective or mathematical optimum.
+**Brightness trim (all modes)** is always visible above the image previews. It defaults to 1.00; lower it to darken the conversion target and reduce washout. The trim is applied after image adjustments and before palette mapping/dithering, so it changes real exported pixels, not the simulated monitor brightness. Colors only (the startup and reset default) and Image only preserve it. Image + colors is free to change the trim along with other input controls and the palette; the incoming trim does not constrain its reference target. The existing Brightness control remains available for automatic input fitting. Settings save the trim; older settings default to 1.00. Reset image adjustments and Reset all options restore 1.00.
+
+The old Optimize input checkbox and Global optimize button are replaced by this scope selector and **Search effort: Standard / Thorough** under Advanced search. In 8 color mode, effort controls the ideal eight-color image refinement budget. Legal-palette matching uses the same exhaustive weighted comparison in both settings. Other modes retain their mode-specific effort settings.
 
 Optimization keeps the previous result until completion. **Compare: before optimization** displays the starting conversion; **Undo optimization** restores it. The status line lists changed controls and whether colors changed. Editing during a search cancels it and refreshes using the current palette; it does not restart optimization. Press Optimize again when ready. Later image edits clear the one-step optimization comparison so it cannot be applied to a different image state.
 
@@ -79,9 +87,9 @@ Select **Output mode** at the top of the controls. Cartridge modes export standa
 | Mode | Image | Colors and temporal behavior |
 | --- | --- | --- |
 | Chronocolor classic — Flicker | 48×128 | Locks original RGB components and black background; three-frame temporal mixture. |
-| Chronocolor custom — Flicker | 48×128 | Custom components/background; original or improved palette search; three-frame mixture. |
+| 8 color mode — Flicker | 48×128 | Custom components/background; weighted eight-color search with a dithered ideal image; three-frame mixture. |
 | Two Color — Static | 48×128 | One solid foreground and background, identical on every frame; exhaustive legal color-pair search. |
-| Chronocolor per line — Flicker | 48×128 | Three component colors chosen independently for each row; one shared background; temporal mixture. |
+| 8 color per line mode — Flicker | 48×128 / 48×192 | Three component colors per row; shared or independently fitted row backgrounds; three-frame temporal mixture. |
 | Scanline color — Static | 48×128 | A foreground color per row and one shared background; identical frames. |
 | No flicker — playfield — Static | 40×192 | A separately selected foreground/background pair per row, full playfield width, identical frames. |
 | Playfield Plus — Static | 40×192 | Up to four solid colors per row: left/right score colors plus a timed background change. Static 16 KB F6 ROM. |
@@ -96,7 +104,7 @@ Select **Output mode** at the top of the controls. Cartridge modes export standa
 | DPC+ sprites (2 frames) — Flicker | 48×192 | Separate P0/P1 colors per row in each frame; background per frame; 32 KB DPC+. |
 | CDFJ+ sprites (2 frames) — Flicker | 48×192 | Same two-frame constraints, with CDFJ+ streams; 32 KB CDFJ+. |
 
-Scanline modes fit their row palettes automatically on initial conversion. Choose Colors only or Image + colors to refit them explicitly after edits. Per-line temporal search uses a bounded coordinate search; static row/pair fitting evaluates all allowed hardware colors. Those mode-specific searches supersede the classic/custom search selector, which is disabled when inapplicable. The playfield mode initially selects Any Atari color for its background search, allowing both colors to change per row; Black and Black or white constraints remain available. Sprite modes select a shared background before fitting individual rows.
+Scanline modes fit their row palettes automatically on initial conversion. Choose Colors only or Image + colors to refit them explicitly after edits. Per-line temporal search uses a bounded coordinate search; static row/pair fitting evaluates all allowed hardware colors. Those mode-specific searches remain separate from the Custom weighted eight-color search. The playfield mode initially selects Any Atari color for its background search, allowing both colors to change per row; Black and Black or white constraints remain available. Sprite modes select a shared background before fitting individual rows.
 
 Scanline palettes are saved with settings. Swatches display the selected row; they are not a claim that the entire raster has one palette. Flicker-free means the image data and colors repeat each television frame: normal CRT refresh and display characteristics still apply. The finer-resolution modes constrain colors by row or region; the experimental BUS raster instead allows arbitrary NTSC colors at just 16 samples across. See [RESEARCH.md](RESEARCH.md) for source material, cycle budgets, trade-offs and verification.
 
@@ -112,7 +120,7 @@ Exports are standard **16,384-byte F6** cartridges. Open in Stella automatically
 
 ### Editing palette colors
 
-Manual component editing applies to Chronocolor custom and Two Color. Classic locks RGB; scanline-mode swatches are read-only selected-row samples, with colors fitted independently by the optimizer.
+Manual component editing applies to 8 color mode and Two Color. Classic locks RGB; scanline-mode swatches are read-only selected-row samples, with colors fitted independently by the optimizer.
 
 The eight output swatches **0–7** are followed by **Component 1, 2, 3 and Background** previews. Click a component to choose from the 128 valid NTSC colors. The eight blended output swatches are read-only; edit their components instead. The dialog previews all eight resulting mixtures; **Apply colors** commits the changes, while Cancel leaves the current palette untouched. Output colors cannot be edited independently because the cartridge derives them from the same four hardware colors.
 
@@ -126,7 +134,7 @@ Click **Save WebP…** and choose the destination. The resulting `.webp` can be 
 
 **ATARI Rendering Preview** opens a separate window using the completed conversion’s actual stored frames in cartridge order. Nominal NTSC pace is approximately 60 frames per second: a three-frame cycle is about 20 Hz, a two-frame cycle about 30 Hz. It displays the frames themselves, with optional persistence, rather than only their static average.
 
-Static modes show one image and identify themselves as static. Two-frame modes show two frames; Chronocolor modes show three. The main output selector follows the same frame count.
+Static modes show one image and identify themselves as static. Two-frame modes show two frames; Classic and the 8 color modes show three. The main output selector follows the same frame count.
 
 Use Pause/Play, Next frame, or slower 30/10/3 fps playback. Space toggles playback, Right Arrow steps one frame, and Escape closes this preview window. Phosphor persistence starts at **60%** and adds an illustrative trail from preceding frames; set it to zero for raw frame cycling. Resizing preserves the chosen image geometry and crisp pixels. Reopening the preview loads the latest completed conversion into the same window.
 
@@ -146,13 +154,19 @@ Diffusion first bounds the source to mixtures the local palette can reproduce, p
 
 ### Palette search
 
-New sessions default to **Improved weighted** with a **Black** background. Loading saved settings retains their selected search and background.
+**Weighted eight-color** is the only 8 color mode palette search. Startup and Reset all options select **Colors only**, **Thorough**, and **Black**. Black or white and Any Atari color remain available. Old search names in saved settings migrate automatically.
 
-**Legacy exhaustive** retains the historical descending component traversal and representative-color sampling approach, now using CIEDE2000 for representative selection and palette scoring. The background selector offers **Black**, **Black or white**, and **Any Atari color** in both search models. Any Atari color extends the legacy search to all 128 NTSC background codes, evaluating 128 times as many candidates as black-only (64 times as many as black/white). Progress and cancellation remain available; a zero-error palette can finish early because it is already an exact match. The optional diversity preference favors use of more mixture colors. Unsafe array bounds and short-color-image behavior are corrected. Floating-point diffusion and corrected edge cases mean this is not a promise of pixel-for-pixel identity with every old executable.
+The first stage builds an ideal eight-color image using colors from the simulated mixed-color pool, independently of whether those colors coexist in one legal palette. Black is reserved for Black searches. Deterministic starting palettes and bounded spatial least-squares refinements are evaluated with the selected dither, strength and serpentine setting. A multiscale DE00/detail score selects the best rendered ideal image. Standard permits up to 8 trials; Thorough up to 16. This is a constrained heuristic, not a guarantee of globally optimal eight-color quantization.
 
-**Improved weighted** uses a bounded color histogram and deterministic multi-start coordinate search over valid Atari colors. Frequent colors influence the score; all four hardware colors can be searched, including arbitrary background colors. This is a heuristic, not a globally optimal result or a guarantee that every picture will look better. Compare both approaches using the same image.
+The second stage uses the actual dithered pixel counts as palette weights. Colors only compares all 357,760 foreground triples for each allowed background (45,793,280 combinations with any background). Distances to mixed colors are precomputed; candidate comparisons perform only table lookups and weighted arithmetic. The optional temporal-brightness score uses weighted three-frame luminance variance. This is exhaustive for the weighted palette proxy, not the entire original-image dither objective. No repeated full-image renders are performed during matching.
 
-The historical dither-every-candidate brute-force mode is not implemented. New scanline kernels are independent implementations, not a claim to reproduce every historical Chrono3 experiment.
+Image + colors first builds the ideal palette from neutral input. Every legal candidate is screened using a direct, per-channel affine range fit and weighted normalized RGB error. The best 128 screening candidates are ranked with weighted CIEDE2000 on the toned ideal colors, range normalization and a penalty for collapsed channels. This final DE00 ranking is a shortlist refinement, not exhaustive DE00 over all arbitrary-background palettes. Only the winner is applied to the original image. The old alternating input/palette loops are bypassed for Custom.
+
+Joint scoring also penalizes RGB casts and lifted black levels after removing a common brightness gain; uniform dimming remains free. This prevents a narrow red or blue palette from winning simply by recoloring the entire ideal image.
+
+Image only directly fits source 1st/99th-percentile channel ranges to the current palette. Colors and crop stay fixed. Nearly flat channels use the full 0–255 reference range to avoid extreme gains. Brightness, RGB gains and fitted RGB offsets persist in settings and exports. Offsets are displayed with the output preview. Reset image adjustments clears them. Joint fitting replaces the prior input adjustments and resets manual trim to neutral; Colors only preserves every input adjustment; Image only retains manual trim. Classic keeps its dedicated brightness-only algorithm. Other display modes retain their specialized searches.
+
+The mixed-color catalog is cached in memory. Windows x64 uses the bundled, dependency-free `chrono/native/palette_match.dll`; its C source and reproducible build script (`scripts/build_palette_matcher.py`) are included. The NumPy fallback produces equivalent matching scores but is slower, especially for joint arbitrary-background searches. Rebuilding the helper requires Visual Studio C++ build tools. Standalone packaging rebuilds and includes it.
 
 ## Cartridge output
 
@@ -193,9 +207,15 @@ Original discussion: [Chronocolour Enhancement](https://forums.atariage.com/topi
 No new license is asserted over third-party historical code. Retain the original notices and credit Andrew's contribution in documentation accompanying ROMs made with this kernel. See [CREDITS.md](CREDITS.md).
 
 
-## Bus stuffing (experimental) — 0.2.2-dev
+## Bus Stuffing - 128x200 Single Color
 
-Choose **Bus stuffing (experimental)** under Output mode. It exports a genuine BUS2 cartridge and displays **16 × 192 independent color samples**, each free to select any of the 128 NTSC colors. Samples are nine color clocks wide; this is deliberately coarse horizontally but has no temporal flicker. All scaling, cropping, input controls and dithering remain available. The full NTSC color chart replaces component swatches. There is no restricted palette to search; Image only optimization adjusts the image.
+Choose **Bus Stuffing - 128x200 Single Color — Flicker** to reproduce the 128-pixel bitmap technique derived from cd-w / SpiceWare's 128bus_20170120 demo. There is one foreground and one shared background. Each pixel is drawn in one of two complementary fields; the preview, palette search and input optimization account for the 50% foreground duty using the shared linear-light model.
+
+ATARI Rendering Preview and animated WebP export show the actual fixed field pattern. Crop/zoom, scaling and all dithers remain available. Export produces a 32 KiB BUS2 BIN and self-contained DASM ASM. Optional BUS support must be installed. Physical Harmony/console testing remains outstanding. See BUS-RESEARCH.md for the kernel provenance and verification.
+
+## Bus Stuffing - 16x192 Color Raster
+
+Choose **Bus Stuffing - 16x192 Color Raster — Static** under Output mode. It exports a genuine BUS2 cartridge and displays **16 × 192 independent color samples**, each free to select any of the 128 NTSC colors. Samples are nine color clocks wide; this is deliberately coarse horizontally but has no temporal flicker. All scaling, cropping, input controls and dithering remain available. The full NTSC color chart replaces component swatches. There is no restricted palette to search; Image only optimization adjusts the image.
 
 Open in Stella selects BUS. The 32 KiB BIN includes its cartridge driver, ARM initializer, image and timed kernel. Generated ASM rebuilds the same BIN with DASM. **Stella rendering and timing are verified; physical console/Harmony compatibility is not.** The mode is experimental and should not be treated as a portable ordinary 4K cartridge.
 
@@ -209,3 +229,163 @@ Third-party BUS, DPC+ and CDFJ+ driver bytes are **not included** in this reposi
 The original authors retain their rights. CREDITS.md and ADVANCED-MODES.md link the sources. The fetch mechanism does not grant a new license to redistribute those drivers or ROMs containing them. Their redistribution terms remain an upstream matter.
 
 The historical `Run Chrono2.cmd` remains a compatibility launcher. Existing settings, repository URLs and machine-local Stella preferences continue to work. Historical Chrono2 files are not renamed.
+
+
+## BUS 128x200 Color per Line
+
+Choose **Bus Stuffing - 128x200 Color per Line — Flicker** beside the Single Color mode. Each of the 200 rows has one independently fitted foreground color, with one shared background for the entire picture. This keeps the same 128-pixel detail and two alternating spatial fields as the original single-color mode; it does not provide arbitrary full color at each pixel.
+
+The first conversion fits row colors automatically. Choose **Colors only → Optimize** to refit them, or **Image + colors** to search image adjustments too. The background selector permits black, black/white, or any Atari color. The row inspector shows the foreground and shared background; Image only and crop/dither changes retain those colors. ATARI Rendering Preview and animated WebP export show the actual field layout. Matching uses the linear-light 50% foreground/background mixture.
+
+ASM and 32 KiB BUS BIN exports use a new timed kernel that updates both sprite colors in horizontal blanking. DASM parity and Stella pixel/timing checks pass; physical Harmony/console validation is still outstanding. Cartridge support uses the same optional BUS2 driver setup as Single Color. Restart the source application to load the new selection.
+
+### Optional paired-row color variety
+
+In **Bus Stuffing - 128x200 Color per Line**, enable **Colors → Paired rows — force color variety** to fit rows 0–1, 2–3, and so on together. Every pair receives two different foreground colors, one per row, plus the existing global background. All three are different physical palette RGB colors; synonymous color codes do not count as variety. This is strict even in flat areas, so visible alternating-row texture is expected. Black pixels can remain background even though the pair's foreground colors differ.
+
+The search evaluates the actual two-row output averaged in linear light, with additional weight on the original row detail. It checks both upper/lower assignments. Input optimization uses the same paired view of the image; ATARI Rendering Preview still shows the real individual rows and temporal fields. Dithering remains the selected method, with no new downward error transfer. Toggling the option refits the row colors; ordinary image adjustments and Image only retain them. The option is saved in settings, defaults off for existing projects, and Reset all options turns it off.
+
+Paired fitting is a bounded search: all allowed shared backgrounds are screened, the best four are evaluated jointly, and candidate foregrounds include leading row/average fits and representatives of every TIA hue family. It does not claim an exhaustive optimum. The cartridge format and kernel are unchanged.
+
+
+### Random row colors and dithering during palette selection
+
+The **Random** button under Colors is available in **Bus Stuffing - 128x200 Color per Line**. It assigns a random foreground to every row, keeps the current shared background, and never repeats a visible foreground color on adjacent rows. Foregrounds also differ from the background. Palette aliases that have identical RGB values do not count as different colors. Random works with the paired-row checkbox on or off.
+
+Random is a one-shot action: adjustments, dithering changes, previews and exports keep the resulting row table. Settings save the actual colors, so reopening does not roll them again. Press Random again for another table. Random selects Image only optimization; explicitly choose Colors only or Image + colors to replace the random table with fitted colors.
+
+BUS row-color fitting now evaluates shortlisted complete palettes through the **selected final dithering path**, including strength, serpentine order, gamut projection, black protection and diffusion across rows. This applies to independent and paired-row searches. A residual-feedback proposal is generated from the rendered result and tested again on the unchanged source. A worse-scoring trial cannot replace the current best. This is a bounded refinement, not an exhaustive search over every possible row palette; Standard tests fewer candidates than Thorough. Searches with None or zero strength retain the existing undithered fitting behavior.
+
+Choose the dithering method before running Colors only or Image + colors. Changing the dither alone keeps existing colors; the next explicit color search evaluates that method. Full-image candidate renders take additional time and support cancellation. Kernel timing and cartridge packing are unchanged.
+
+### Selectable 48×192 raster
+
+Two Color (Static), 8 color mode and 8 color per line mode have a Resolution
+selector beneath Output mode: **48×128** (default) or **48×192**. Settings files
+retain the choice. Changing resolution refits any per-line palettes for the new
+row count; global colors and image controls remain available as before.
+
+At 192 rows, Two Color uses the existing 4 KB sprite kernel. The 8 color modes use a standard 16 KB F6 cartridge with three interleaved frames and a
+shared background. Per-line backgrounds use the 64 KB EF extension described below.
+No bus stuffing or ARM driver is needed. Shared-background 128-row exports and
+Classic mode are unchanged. Atari pixels 2:1 keeps the pixel shape at
+either height; Display 4:3 fills a 4:3 picture. Emulator validation does not replace
+physical Harmony/TV testing.
+
+### Fast Two Color Static optimization
+
+Two Color Static uses a small population-weighted two-color match instead of
+repeated palette/input searches. It groups the image into at most 512 color bins,
+fits two Lab color centers, and snaps them to actual Atari colors. Black,
+Black or white, and Any Atari color background choices remain available.
+
+Colors only preserves all input adjustments. Image only makes one direct RGB
+range fit to the existing palette, comparing it with the current input using the
+selected dithering and retaining the better result. Image + colors matches the
+palette once, then performs that same input fit; it can reset exposure trim.
+Standard/Thorough is disabled for this mode because there is one bounded method.
+This is a speed-oriented approximation, not an exhaustive optimum. Final pixel
+matching and dithering are unchanged. It works at both 48×128 and 48×192.
+
+### Prebuilt mixed Atari palettes
+
+The application bundles the eight-color temporal-mixture catalog and lookup tables in
+`chrono/resources/mixed-palettes`. First use opens read-only memory-mapped arrays;
+subsequent modes and searches reuse the same catalog. It does not regenerate the
+357,760 foreground triples, 320,818 unique mixed RGB colors, Lab coordinates or
+128×128×128 component lookup cube during normal use. Shared-background palettes
+are assembled by indexing this cube, including arbitrary Atari backgrounds.
+The small nearest-color search index is created once in memory.
+
+Developers: run `python scripts/build_mixed_palettes.py` to generate/update the
+resources, or add `--check` to validate without writing. The Windows packaging
+script runs this build step automatically and includes the data folder. Files
+use NumPy's non-pickle format with explicit types, shapes, SHA-256 checksums and
+a color-model/palette signature. Increment the store format when changing the
+blend-generation algorithm; update the shared color-model version when changing
+color science. Missing, damaged or stale resources produce a repair message,
+rather than silently rebuilding during an interaction. Image-dependent palette
+selection and dithering still run for each image.
+
+### Selecting 8 color per line mode
+
+Selecting 8 color per line mode, opening a new image in it, or changing its raster
+height starts a preview with the current palette copied to each row. These actions
+no longer launch the expensive row-by-row color search. Click Optimize with
+**Colors only** or **Image + colors** to fit a different palette to each row;
+progress reports the row count. **Image only** keeps the current row palettes.
+Previously saved row palettes still load and render directly.
+
+**Background for color search → Any color by line** lets each row choose its own
+background from all 128 Atari NTSC color codes, alongside its three component
+colors. **Any Atari color** still chooses one shared background; **Black** and
+**Black or white** keep their shared-background restrictions. Click Optimize to
+apply a new search choice. Image only retains the existing row colors.
+
+The row search uses the existing perceptual coordinate-descent fit, now varying
+all four color slots when requested. It tries every Atari code for each slot,
+with both the preceding row and an image-derived palette as starting points.
+This is not an exhaustive four-color search or the static Scanline Color
+mode's dither-aware pair search. Final conversion uses the selected dithering.
+
+Changing-background exports use a driver-free **64 KB EF cartridge** at either
+height. All three temporal phases share each row's selected background. The
+kernel reuses the unrolled 48-pixel raster, and advances phase after a complete
+frame. A uniform background retains the smaller 4 KB / 16 KB export. ASM and BIN
+are byte-for-byte checked with DASM; Stella checks all pixels in the three phases
+and 262-line NTSC timing. An EF identification tag supports automatic detection;
+Open Stella explicitly selects the correct format. A black priority-playfield
+mask covers both side margins, and the background clears after the final row,
+so changing row colors remain inside the active picture. Stella verification
+checks all outside pixels as well as the picture and timing. Existing exported
+ROMs must be exported again to receive this fix. Physical cartridge testing
+remains outstanding.
+
+
+### Scanline Color: dither-aware foreground and background
+
+Scanline Color is a static, two-color-per-row mode at 48×128 or 48×192.
+The background search choices are Black, White, Any Atari color (one shared
+background), and Per line (independent foreground/background for each row).
+Choose the dithering method, strength and serpentine setting before clicking
+Optimize with Colors only or Image + colors. Changing those settings alone
+re-renders the existing palette; click Optimize to refit its colors.
+
+The search tests actual dithered rows with error carried from preceding rows.
+Fixed backgrounds test all 128 foreground codes. Per line tests all 8,256
+unordered pairs (including single-color pairs), with no shortlist or effort
+reduction. Every candidate receives the same incoming error; horizontal
+diffusion runs during its trial, and only the winning row commits error to
+subsequent rows. Four independent batches accelerate this exact evaluation.
+Arbitrary shared backgrounds still use a mixture-range shortlist. Per-line
+search is exhaustive for each row given incoming error, not over every possible
+combination of palettes across the entire image. A full-raster nearest-color baseline and valid current
+palette are retained if the proposed rows score worse. The viewing score
+combines individual pixel error, horizontally averaged linear-light color,
+and brightness edges; it does not invent additional cartridge colors.
+
+Cartridges use a driver-free 16 KiB F6 kernel with unrolled immediate data.
+Both foreground and background are written for every line. ASM and BIN match
+byte-for-byte under DASM. Stella checks cover independently changing colors,
+all 48 pixels, bank transitions, both heights and 262-scanline NTSC frames.
+This is emulator verification, not physical Harmony cartridge validation.
+
+### BUS 128×200 Color per Line: shared scanline search
+
+BUS Color per Line uses the same row-by-row candidate renderer as static
+Scanline Color. Each tested shared background evaluates all 128 foreground
+codes on every row with the selected dithering, strength and serpentine
+setting. Each candidate inherits the same error, diffuses horizontally during
+its trial, and only the winning row passes error to later rows. The final
+preview uses that same renderer. BUS pixels are scored as their actual
+50%-duty foreground/background blend, not as full-brightness static pixels.
+
+The cartridge still has one shared background. Black and Black-or-white
+constraints are retained. Any Atari color screens all shared backgrounds,
+then renders the leading whole-image candidates, as in static Scanline Color;
+it does not test all possible whole-image background/row combinations.
+Paired rows exclude the background and the other row's foreground, and score
+the second row with its companion's linear-light average. Random row colors
+remain fixed until explicit color optimization. The existing legal palette
+and a baseline are retained when a new pass scores worse. Cartridge timing,
+stream layout, driver requirements and export format are unchanged.

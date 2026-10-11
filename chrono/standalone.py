@@ -79,3 +79,27 @@ def self_test(folder):
     finally:
         if app is not None:app.close()
         (folder/'self-test.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+
+
+def palette_self_test(path):
+    """Focused packaging check: no GUI, downloads, or runtime catalog generation."""
+    import numpy as np
+    from .indexed_search import get_catalog
+    from .core import _mixtures,_mixtures_direct
+    from .palette_store import DIRECTORY
+    from .weighted_search import blend_cube
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    result={'resource_directory':str(DIRECTORY)}
+    try:
+        start=time.perf_counter();catalog=get_catalog()
+        result['load_seconds']=time.perf_counter()-start
+        assert isinstance(catalog.rgb,np.memmap) and not catalog.rgb.flags.writeable
+        assert get_catalog() is catalog
+        assert blend_cube(catalog) is catalog.blend_cube
+        codes=np.random.default_rng(44).integers(0,128,(256,4))
+        np.testing.assert_array_equal(_mixtures(codes),_mixtures_direct(codes))
+        result.update(status='passed',mixed_colors=len(catalog.rgb),triples=len(catalog.triples))
+    except Exception:
+        result.update(status='failed',error=traceback.format_exc())
+        raise
+    finally:path.write_text(json.dumps(result,indent=2),encoding='utf-8')

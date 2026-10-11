@@ -58,6 +58,6 @@ class ModesTests(unittest.TestCase):
                 result=subprocess.run([dasm,'image.asm','-f3','-oimage.bin'],cwd=tmp,capture_output=True)
                 self.assertEqual(result.returncode,0,result.stdout)
                 self.assertEqual((tmp/'image.bin').read_bytes(),binary(i,rows[0],mode,rows))
-                self.assertEqual(len((tmp/'image.bin').read_bytes()),16384 if mode==MODES[6] else 4096)
+                self.assertEqual(len((tmp/'image.bin').read_bytes()),16384 if mode in (MODES[4],MODES[6]) else 4096)
 
 if __name__=='__main__':unittest.main()

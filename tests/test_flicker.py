@@ -86,4 +86,8 @@ class FlickerTests(unittest.TestCase):
         winner=joint_optimize(self.image,s)
         _,j,t=convert_image(self.image,winner)
         self.assertEqual(t.codes,s.codes)
-        self.assertEqual(t.brightness,.47)
+        from chrono.classic_brightness import ClassicToneTarget
+        from chrono.core import target_palette
+        from chrono.modes import render
+        target=ClassicToneTarget(ref,target_palette(s))
+        self.assertLessEqual(target.score(render(j,t)),target.score(render(i,s)))

@@ -6,7 +6,7 @@ SPECS={
  'bus2':('2d489398d221bd340e8ea7af129045c0147089a0b17785e6cea87a094cdb81d0',2048),
  'dpcplus':('bcbe33dc02ad5104f3a3a53a856a23c57f435344790843f4fb6e746193468d0c',3072),
  'cdfjplus':('9d1cf0fb16ed7ac7633c71a436066b2470a0bdb9b54323588793c2b1d2a95d0c',2048)}
-TEMPLATES={'bus-raster':'bus2','sprites-dpc':'dpcplus','pair-dpc':'dpcplus','sprites-cdfj':'cdfjplus','pair-cdfj':'cdfjplus'}
+TEMPLATES={'bus128-line':'bus2','bus128':'bus2','bus-raster':'bus2','sprites-dpc':'dpcplus','pair-dpc':'dpcplus','sprites-cdfj':'cdfjplus','pair-cdfj':'cdfjplus'}
 
 def verify(name,data):
     digest,size=SPECS[name]

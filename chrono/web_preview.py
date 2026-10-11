@@ -9,10 +9,11 @@ from tkinter import ttk,filedialog,messagebox
 import numpy as np
 from PIL import Image
 from .core import dimensions,display_aspect,frame_count,frame_pixels
+from .preferences import dialog_directory,remember_directory
 
 def preview_size(settings,long_edge=640):
     if long_edge not in (320,640,960):raise ValueError('Choose a supported export size')
-    w,h={'Atari pixels 2:1':(3,4),'Display 4:3':(4,3),'BUS raster':(6,5),
+    w,h={'Atari pixels 2:1':(dimensions(settings)[0]*2,dimensions(settings)[1]),'Display 4:3':(4,3),'BUS bitmap':(32,25),'BUS raster':(6,5),
          'Sprite raster':(1,2),'Wide raster':(1,1),'Movie raster':(5,6),
          'Raw pixels':dimensions(settings)}[display_aspect(settings)]
     return max(1,round(long_edge*w/max(w,h))),max(1,round(long_edge*h/max(w,h)))
@@ -79,11 +80,12 @@ class AnimationExport(tk.Toplevel):
 
     def save(self):
         path=filedialog.asksaveasfilename(parent=self,title='Save website preview',initialfile=self.stem+'.webp',
-                                          defaultextension='.webp',filetypes=[('WebP image / animation','*.webp')])
+                                          defaultextension='.webp',filetypes=[('WebP image / animation','*.webp')],**dialog_directory('save'))
         if not path:return
         try:
             result=export_animation(path,self.indices,self.settings,self.rate.get(),self.retention.get()/100,self.edge.get())
         except Exception as ex:
             messagebox.showerror('Animation export failed',str(ex),parent=self);return
+        remember_directory('save',Path(path).parent)
         if self.on_saved:self.on_saved(path,result)
         self.destroy()

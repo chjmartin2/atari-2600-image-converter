@@ -97,7 +97,7 @@ class AnimatedPreview(tk.Toplevel):
         if self.closed:return
         if self.resize_job is not None:self.after_cancel(self.resize_job);self.resize_job=None
         w,h=max(1,self.canvas.winfo_width()),max(1,self.canvas.winfo_height())
-        bw,bh={"Atari pixels 2:1":(96,128),"Display 4:3":(4,3),"BUS raster":(6,5),"Sprite raster":(1,2),"Wide raster":(1,1),"Movie raster":(5,6),"Raw pixels":(self.frames[0].shape[1],self.frames[0].shape[0])}[self.aspect]
+        bw,bh={"Atari pixels 2:1":(self.frames[0].shape[1]*2,self.frames[0].shape[0]),"Display 4:3":(4,3),"BUS bitmap":(32,25),"BUS raster":(6,5),"Sprite raster":(1,2),"Wide raster":(1,1),"Movie raster":(5,6),"Raw pixels":(self.frames[0].shape[1],self.frames[0].shape[0])}[self.aspect]
         scale=min(w/bw,h/bh);size=(max(1,round(bw*scale)),max(1,round(bh*scale)))
         frames=persistence_frames(self.frames,self.persistence.get())
         self.photos=[ImageTk.PhotoImage(Image.fromarray(frame).resize(size,Image.Resampling.NEAREST),master=self) for frame in frames]

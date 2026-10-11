@@ -2,15 +2,16 @@
 from dataclasses import replace
 import numpy as np
 from .color import blend,distance,dim
-from .core import (Settings,MODES,PRESETS,CODES,TIA,prepare,target_palette,quantize,
-                   hardware_palette,frame_pixels,optimize,check_cancel,_score)
+from .core import (Settings,MODES,BUS128,BUS128LINE,PRESETS,CODES,TIA,prepare,target_palette,quantize,
+                   hardware_palette,frame_pixels,optimize,optimize_legacy,SEARCHES,check_cancel,_score)
 
 def normalize(s):
+    if s.mode==MODES[1] and s.search!=SEARCHES[0]:s=replace(s,search=SEARCHES[0])
     if s.mapping != "Temporal blend":s=replace(s,mapping="Temporal blend")
     if s.mode==MODES[7]:return replace(s,line_codes=(),mapping='Temporal blend',preset='Full NTSC palette')
     if s.mode==MODES[0]:
         return replace(s,codes=PRESETS['RGB (original Chronocolour)'],line_codes=(),mapping='Temporal blend',preset='RGB (original Chronocolour)')
-    if s.mode==MODES[2]:
+    if s.mode in (MODES[2],BUS128):
         return replace(s,codes=(s.codes[0],)*3+(s.codes[3],),line_codes=(),mapping='Temporal blend')
     return s
 
@@ -20,12 +21,24 @@ def render(indices,s):
 def convert_image(image,s,cancel=None):
     s=normalize(s)
     adjusted=prepare(image,s)
-    if s.mode in (*MODES[3:7],*MODES[8:]) and not s.line_codes:
+    if s.mode==MODES[4] and not s.line_codes:
+        bg="00" if s.background=="Black" else "0E" if s.background=="White" else s.codes[3]
+        row=(s.codes[0],)*3+(bg,)
+        s=replace(s,codes=row,line_codes=(row,)*adjusted.height)
+    if s.mode==MODES[3] and not s.line_codes:
+        # Selecting the mode must not launch an image-specific palette search.
+        # A legal starter table retains the current colors at either height.
+        check_cancel(cancel)
+        s=replace(s,line_codes=(tuple(s.codes),)*adjusted.height)
+    if s.mode!=BUS128 and s.mode in (*MODES[3:7],*MODES[8:]) and not s.line_codes:
         s=search_palette(adjusted,s,cancel=cancel)
     from .temporal import canonicalize
     s=canonicalize(s)
     if s.mode in MODES[17:20]:
         from .extended import convert
+        return adjusted,convert(adjusted,s,cancel),s
+    if s.mode in (MODES[4],BUS128LINE):
+        from .scanline_search import convert
         return adjusted,convert(adjusted,s,cancel),s
     indices=quantize(adjusted,target_palette(s),s.dither,s.strength,s.serpentine,cancel)
     # Duplicate palette entries must never accidentally produce temporal shades.
@@ -35,7 +48,7 @@ def convert_image(image,s,cancel=None):
     return adjusted,indices,s
 
 def backgrounds(s):
-    return {'Black':[0],'Black or white':[0,112],'Any Atari color':list(range(128))}[s.background]
+    return {'Black':[0],'Black or white':[0,112],'Any Atari color':list(range(128)),'Any color by line':list(range(128))}[s.background]
 
 def best_pair(pixels,bgs):
     # All foregrounds x allowed backgrounds; distances computed just once.
@@ -46,6 +59,15 @@ def best_pair(pixels,bgs):
 
 def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
     s=normalize(s);check_cancel(cancel)
+    if s.mode==MODES[4]:
+        from .scanline_search import search
+        return search(adjusted,s,progress,cancel)
+    if s.mode==BUS128LINE:
+        from .bus128_line import search
+        return search(adjusted,s,progress,cancel)
+    if s.mode==BUS128:
+        from .bus128 import search
+        return search(adjusted,s,progress,cancel)
     if s.mode in MODES[17:20]:
         from .extended import search
         return search(adjusted,s,progress,cancel)
@@ -59,19 +81,8 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
         return search(adjusted,s,progress,cancel)
     if s.mode in MODES[8:]:return search_sprite_palette(pixels,s,progress,cancel)
     if s.mode==MODES[2]:
-        # Histogram centroids preserve common colors without allocating 128² x all pixels.
-        flat=pixels.reshape(-1,3);keys=(flat//16).astype(int)
-        _,inv,count=np.unique(keys,axis=0,return_inverse=True,return_counts=True)
-        colors=np.array([np.bincount(inv,weights=flat[:,c])/count for c in range(3)]).T
-        weights=count/count.sum()
-        errors=distance(colors[None,:,:],TIA[:,None,:])**2
-        bgs=backgrounds(s);best=(float('inf'),0,bgs[0])
-        for fg in range(128):
-            check_cancel(cancel)
-            scores=np.minimum(errors[fg],errors[bgs]) @ weights
-            bg=int(scores.argmin())
-            if scores[bg]<best[0]:best=(scores[bg],fg,bgs[bg])
-        return replace(s,codes=(CODES[best[1]],)*3+(CODES[best[2]],),preset='Custom / optimized')
+        from .two_color_match import search
+        return search(adjusted,s,progress,cancel)
     if s.mode==MODES[6]:
         rows=[];bgs=backgrounds(s)
         for y,row in enumerate(pixels):
@@ -82,11 +93,12 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
         return replace(s,line_codes=tuple(rows),codes=rows[len(rows)//2],mapping='Temporal blend',preset='Custom / optimized')
     if s.mode in MODES[3:]:
         rows=[];bgs=backgrounds(s)
-        # Sprite kernels have a constant background. The playfield can change both.
+        # Chronocolor can fit all four row colors; other sprite modes share BG.
+        row_background=s.mode==MODES[3] and s.background=='Any color by line'
         bg=bgs[0]
-        if s.mode!=MODES[5] and len(bgs)>1:
+        if s.mode!=MODES[5] and not row_background and len(bgs)>1:
             # Choose a legal shared background before fitting individual rows.
-            global_codes,_=optimize(adjusted,replace(s,mode=MODES[1],line_codes=(),auto_input=False,search='Improved weighted'),progress,cancel)
+            global_codes,_=optimize_legacy(adjusted,replace(s,mode=MODES[1],line_codes=(),auto_input=False,search='Improved weighted'),progress,cancel)
             bg=CODES.index(global_codes[3])
         previous=np.array([CODES.index(c) for c in s.codes]);previous[3]=bg
         for y,row in enumerate(pixels):
@@ -100,11 +112,12 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
                 unique,counts=np.unique(nearest,return_counts=True)
                 dominant=list(unique[np.argsort(counts)[-3:]])
                 while len(dominant)<3:dominant.append(dominant[-1])
-                for start in (previous,np.array([*dominant,bg])):
+                for start in (previous,np.array([*dominant,dominant[-1] if row_background else bg])):
                     current=start.copy()
                     for sweep in range(3):
                         old=current.copy()
-                        for axis in range(3):
+                        for axis in range(4 if row_background else 3):
+                            check_cancel(cancel)
                             batch=np.tile(current,(128,1));batch[:,axis]=np.arange(128)
                             scores=_score(batch,row,weights)
                             current=batch[int(scores.argmin())]
@@ -113,7 +126,7 @@ def search_palette(adjusted,s,progress=lambda p,t:None,cancel=None):
                     if score<best:best,winner=score,current.copy()
                 previous=winner;codes=tuple(CODES[c] for c in winner)
             rows.append(codes)
-            if y%8==0:progress((y+1)/len(pixels),f'Fitting scanline colors: {y+1}/{len(pixels)}')
+            if y%8==0 or y==len(pixels)-1:progress((y+1)/len(pixels),f'Fitting scanline colors: {y+1}/{len(pixels)}')
         return replace(s,line_codes=tuple(rows),codes=rows[len(rows)//2],mapping='Temporal blend',preset='Custom / optimized')
     codes,_=optimize(adjusted,replace(s,auto_input=False),progress,cancel)
     return replace(s,codes=codes,line_codes=(),preset='Custom / optimized',mapping='Temporal blend')

@@ -10,7 +10,7 @@ import numpy as np
 from .core import DATA,CODES
 from .drivers import load,restore
 
-NAME='Bus stuffing (experimental)'
+NAME='Bus Stuffing - 16x192 Color Raster'
 DRIVER_HASH='2d489398d221bd340e8ea7af129045c0147089a0b17785e6cea87a094cdb81d0'
 IMAGE_OFFSET=0x4000
 

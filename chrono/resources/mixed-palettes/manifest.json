@@ -1,0 +1,71 @@
+{
+  "format": 1,
+  "signature": "1795f4123828a1243e8eb360c27e9392f4109c0c6cb47d8f07662bf95c91df89",
+  "colors": 320818,
+  "arrays": {
+    "triples": {
+      "sha256": "bdad378aaa857b60b88bd44e64dfdc463aa96bb7295c9a3a3e8a3bbfa8f05000",
+      "shape": [
+        357760,
+        3
+      ],
+      "dtype": "<i2"
+    },
+    "rgb": {
+      "sha256": "00648c96986c76000874e366f68b71a8c11bcb119213ca8802908c39236f0cbd",
+      "shape": [
+        320818,
+        3
+      ],
+      "dtype": "|u1"
+    },
+    "members": {
+      "sha256": "cb89e38c1c6f3ac679374e62aaff835a9c1edd0ab7836618a0884df5fdec3bfc",
+      "shape": [
+        357760,
+        8
+      ],
+      "dtype": "<i4"
+    },
+    "lab": {
+      "sha256": "72f29d1bd62f177e3ca6cca74ed9c4fbf3b32b3131b65e3dc44ff3898965fe07",
+      "shape": [
+        320818,
+        3
+      ],
+      "dtype": "<f8"
+    },
+    "keys": {
+      "sha256": "e1003f66e9cf87edd801f0aeb070cf27ce541dda3903921547ed3a5869d4db49",
+      "shape": [
+        320818
+      ],
+      "dtype": "<u4"
+    },
+    "unique_members": {
+      "sha256": "46b6b4f5f6783febcd449c6f65798256a303049799554022be042977adaf1945",
+      "shape": [
+        357760,
+        8
+      ],
+      "dtype": "<i4"
+    },
+    "unique_mask": {
+      "sha256": "56123a09ba20e43bf89bd9fc0a04609fa175727842671461c489436278f112bb",
+      "shape": [
+        357760,
+        8
+      ],
+      "dtype": "|b1"
+    },
+    "blend_cube": {
+      "sha256": "636d623d30261683f8b0f3f12aa9a6dabe834194e403db1ad2cd834adae65fdf",
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "dtype": "<i4"
+    }
+  }
+}

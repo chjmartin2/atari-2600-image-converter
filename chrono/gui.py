@@ -1,5 +1,6 @@
 """Tk desktop workbench. Conversion workers never call Tk."""
 from dataclasses import asdict, replace
+from fractions import Fraction
 from pathlib import Path
 import json
 import os
@@ -13,10 +14,10 @@ from tkinter import ttk, filedialog, messagebox
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw
 from . import __version__
-from .core import (Settings, PRESETS, FILTERS, DITHERS, CODES, TIA, MODES, dimensions, cartridge_type, cartridge_size, display_aspect, frame_count, mode_description, prepare, load_image,
+from .core import (Settings, PRESETS, FILTERS, DITHERS, SEARCHES, CODES, TIA, MODES, BUS128, BUS128LINE, MODE_CHOICES, dimensions, cartridge_type, cartridge_size, display_aspect, frame_count, mode_description, prepare, load_image,
                    hardware_palette, target_palette, quantize, optimize, optimize_input, frame_pixels, drag_crop_position, Cancelled)
 from .palette_picker import PalettePicker
-from .preferences import stella_path, save_stella_path
+from .preferences import stella_path, save_stella_path, dialog_directory, remember_directory
 from .modes import normalize,search_palette,convert_image,render
 from .optimization import joint_optimize,fit_controls
 from .rom import assembly, binary
@@ -73,11 +74,39 @@ class Disclosure(ttk.Frame):
         if self.opened:self.inner.pack(fill='x')
         else:self.inner.pack_forget()
 
+def pixel_perfect_size(image_size, display_size, viewport):
+    """Whole screen-pixel blocks; exact aspect when practical, close otherwise."""
+    iw,ih=image_size;bw,bh=display_size
+    available_w,available_h=(max(1,v-16) for v in viewport)
+    ratio=Fraction(bw*ih,bh*iw)
+    rx,ry=ratio.numerator,ratio.denominator
+    multiple=min(available_w//(iw*rx),available_h//(ih*ry))
+    if multiple>=1 or max(rx,ry)<=4:
+        multiple=max(1,multiple)
+        return iw*rx*multiple,ih*ry*multiple
+    # E.g. 48x128 displayed at 4:3 needs 32x9 blocks for exact aspect.
+    # Prefer a close whole-pixel approximation that fits a normal window.
+    max_x,max_y=available_w//iw,available_h//ih
+    if max_x<1 or max_y<1:
+        small=ratio.limit_denominator(4)
+        return iw*max(1,small.numerator),ih*small.denominator
+    candidates=[]
+    for y in range(1,max_y+1):
+        x=max(1,min(max_x,round(float(ratio)*y)))
+        error=abs(x/y/float(ratio)-1)
+        candidates.append((error,x*y,x,y))
+    close=[c for c in candidates if c[0]<=.03]
+    chosen=max(close,key=lambda c:(c[1],-c[0])) if close else min(candidates,key=lambda c:(c[0],-c[1]))
+    return iw*chosen[2],ih*chosen[3]
+
+
 class Preview(ttk.Frame):
     def __init__(self,parent,title):
         super().__init__(parent)
         self.heading=ttk.Label(self,text=title,style="Section.TLabel"); self.heading.pack(anchor="w",pady=(0,8))
         self.toolbar=ttk.Frame(self);self.toolbar.pack(fill="x",pady=(0,6))
+        self.scale_note=ttk.Label(self.toolbar,text='',style='Muted.TLabel')
+        self.scale_note.pack(anchor='w')
         self.canvas = tk.Canvas(self,bg="#080b0f",highlightthickness=0)
         self.canvas.pack(side="left",fill="both",expand=True)
         y = ttk.Scrollbar(self,orient="vertical",command=self.canvas.yview); y.pack(side="right",fill="y")
@@ -90,13 +119,21 @@ class Preview(ttk.Frame):
     def draw(self):
         if self.image is None:return
         w,h = self.canvas.winfo_width(),self.canvas.winfo_height()
-        bw,bh = {"Atari pixels 2:1":(384,512),"Display 4:3":(512,384),"BUS raster":(576,480),"Sprite raster":(288,576),"Wide raster":(1,1),"Movie raster":(480,576),"Raw pixels":self.image.size}[self.aspect]
-        if self.zoom == "Fit": scale = min(max(w-16,1)/bw,max(h-16,1)/bh)
-        else: scale = float(self.zoom[:-1])/100
-        dw,dh = max(1,round(bw*scale)),max(1,round(bh*scale))
+        bw,bh = {"Atari pixels 2:1":(self.image.width*8,self.image.height*4),"Display 4:3":(512,384),"BUS bitmap":(512,400),"BUS raster":(576,480),"Sprite raster":(288,576),"Wide raster":(1,1),"Movie raster":(480,576),"Raw pixels":self.image.size}[self.aspect]
+        perfect=self.zoom=='Pixel-perfect fit'
+        if perfect:
+            dw,dh=pixel_perfect_size(self.image.size,(bw,bh),(w,h))
+            iw,ih=self.image.size
+            approximate=dw*bh!=dh*bw
+            self.scale_note.configure(text=f'{dw//iw} × {dh//ih} screen pixels per image pixel'+(' · aspect approximated' if approximate else ''))
+        else:
+            self.scale_note.configure(text='')
+            if self.zoom == "Fit": scale = min(max(w-16,1)/bw,max(h-16,1)/bh)
+            else: scale = float(self.zoom[:-1])/100
+            dw,dh = max(1,round(bw*scale)),max(1,round(bh*scale))
         self.drawn_size=(dw,dh)
         self.image_bounds=((max(w,dw)-dw)/2,(max(h,dh)-dh)/2,(max(w,dw)+dw)/2,(max(h,dh)+dh)/2)
-        self.photo = ImageTk.PhotoImage(self.image.resize((dw,dh),Image.Resampling.BICUBIC if self.smooth else Image.Resampling.NEAREST))
+        self.photo = ImageTk.PhotoImage(self.image.resize((dw,dh),Image.Resampling.BICUBIC if self.smooth and not perfect else Image.Resampling.NEAREST))
         self.canvas.delete("all")
         self.canvas.create_image(max(w,dw)//2,max(h,dh)//2,image=self.photo)
         self.canvas.configure(scrollregion=(0,0,max(w,dw),max(h,dh)))
@@ -105,11 +142,21 @@ class App(tk.Tk):
     def __init__(self, initial=None):
         if os.name == "nt":
             import ctypes
+            # Avoid Windows bitmap-stretching the entire Tk window after our
+            # integer pixel scaling. Must be set before creating the first window.
+            try:
+                awareness=ctypes.windll.user32.SetProcessDpiAwarenessContext
+                awareness.argtypes=[ctypes.c_void_p];awareness.restype=ctypes.c_bool
+                awareness(ctypes.c_void_p(-4))  # Per-monitor aware V2.
+            except AttributeError:
+                ctypes.windll.user32.SetProcessDPIAware()
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("RetroComputerist.Atari2600ImageOptimizer")
         super().__init__()
         install_window_icon(self)
         self.title(f"Atari 2600 Image Optimizer {__version__}")
-        self.geometry("1320x850"); self.minsize(1000,700); self.configure(bg=BG)
+        dpi_scale=max(1.,self.winfo_fpixels('1i')/96.) if os.name=='nt' else 1.
+        self.geometry(f'{round(1320*dpi_scale)}x{round(850*dpi_scale)}')
+        self.minsize(round(1000*dpi_scale),round(700*dpi_scale));self.configure(bg=BG)
         self.settings = Settings(); self.source = sample_image(); self.source_path = None
         self.result = None; self.busy = False; self.messages = queue.Queue(); self.cancel = threading.Event()
         self.animated_preview = None
@@ -118,11 +165,11 @@ class App(tk.Tk):
         self.result_current=False
         self.crop_drag=None;self.crop_preview_job=None
         self.revision = 0; self.after_preview = None; self.suspend = False; self.last_export = None
-        self.vars = {}; self.combos={}; self.status = tk.StringVar(value="Open an image or explore the built-in calibration image.")
+        self.vars = {'search':tk.StringVar(value=SEARCHES[0]), 'diversity':tk.BooleanVar(value=False)}; self.combos={}; self.status = tk.StringVar(value="Open an image or explore the built-in calibration image.")
         self._style(); self._layout(); self._sync_vars(self.settings)
         self.bind("<Control-o>",lambda e:self.open_image()); self.bind("<Control-s>",lambda e:self.export())
         self.protocol("WM_DELETE_WINDOW",self.close)
-        self.after(80,self._poll)
+        self.poll_job=self.after(80,self._poll)
         if initial:self.open_image(initial)
         else:self.convert()
 
@@ -179,6 +226,19 @@ class App(tk.Tk):
         self.brand_logo=brand_photo('logo.png',(240,80),self)
         self.brand_label=tk.Label(header,image=self.brand_logo,bg=BG,borderwidth=0)
         self.brand_label.pack(side='left')
+        heartbeat=ttk.Frame(header,padding=(14,0,0,0))
+        heartbeat.pack(side='right')
+        self.heartbeat_canvas=tk.Canvas(heartbeat,width=32,height=34,bg=BG,highlightthickness=0)
+        self.heartbeat_canvas.pack(anchor='e')
+        # Compact Fuji-style vector mark: two flared sides and a straight stem.
+        # One tag lets the existing heartbeat pulse color all three together.
+        left=[(8,3),(12,3),(12,13),(11.8,17.5),(10.5,21),(8.5,24.5),
+              (5.5,27.5),(1,30),(1,25),(4,23),(6,20.5),(7.5,17),(8,13)]
+        for points in (left,[(32-x,y) for x,y in left]):
+            self.heartbeat_canvas.create_polygon(*[v for point in points for v in point],
+                                                 outline='',tags='heartbeat-logo')
+        self.heartbeat_canvas.create_rectangle(14,3,18,30,outline='',tags='heartbeat-logo')
+        self._update_heartbeat()
         ttk.Button(header,text='Open image…',command=self.open_image,style='Accent.TButton').pack(side='right')
         ttk.Button(header,text='Reset all options',command=self.reset_all_options).pack(side='right',padx=8)
         self.file_label=ttk.Label(self,text='Built-in calibration image',style='Muted.TLabel',padding=(20,0));self.file_label.pack(anchor='w')
@@ -194,9 +254,13 @@ class App(tk.Tk):
         self.undo_button=ttk.Button(footer,text='Undo optimization',command=self.undo_optimization,state='disabled');self.undo_button.pack(side='left',padx=8)
         body=ttk.Panedwindow(self,orient='horizontal');body.pack(fill='both',expand=True,padx=18,pady=10)
         left=ttk.Frame(body,width=350);body.add(left,weight=0)
-        self._combo(left,'Output mode · NTSC','mode',MODES,callback=self.mode_changed)
+        self._combo(left,'Output mode · NTSC','mode',MODE_CHOICES,callback=self.mode_changed)
+        self.height_controls=ttk.Frame(left)
+        self.height_controls.pack(fill='x')
+        self._combo(self.height_controls,'Resolution','height',[128,192],callback=self.resolution_changed,integer=True)
         self.mode_summary=tk.StringVar();ttk.Label(left,textvariable=self.mode_summary,style='Muted.TLabel',wraplength=325).pack(anchor='w',pady=(5,8))
         actions=ttk.Frame(left);actions.pack(side='bottom',fill='x',pady=(8,0))
+        self._combo(actions,'Background for color search','background',['Black','Black or white','Any Atari color'])
         self._combo(actions,'Optimize','optimization_scope',['Image + colors','Image only','Colors only'],callback=self.scope_changed)
         self.scope_help=tk.StringVar();ttk.Label(actions,textvariable=self.scope_help,wraplength=325,style='Muted.TLabel').pack(fill='x',pady=5)
         buttons=ttk.Frame(actions);buttons.pack(fill='x')
@@ -220,6 +284,12 @@ class App(tk.Tk):
         self._combo(palette,'Preset','preset',[*PRESETS,'Custom / optimized'],callback=self.preset_changed)
         for i in range(4):self.vars[f'code{i}']=tk.StringVar()
         self.edit_palette_button=ttk.Button(palette,text='Edit palette colors…',command=lambda:self.open_palette_picker(0));self.edit_palette_button.pack(fill='x',pady=5)
+        self.bus_pair_controls=ttk.Frame(palette)
+        self.random_rows_button=ttk.Button(self.bus_pair_controls,text='Random',command=self.randomize_bus_rows)
+        self.random_rows_button.pack(fill='x',pady=5)
+        ttk.Label(self.bus_pair_controls,text='Random foreground for each row; adjacent rows never match. Keeps the shared background.',wraplength=295,style='Muted.TLabel').pack(fill='x')
+        self.bus_pair_check=self._check(self.bus_pair_controls,'Paired rows — force color variety','bus_pair_rows',callback=self.bus_pair_changed)
+        ttk.Label(self.bus_pair_controls,text='Fit rows 0–1, 2–3, etc. together. Each pair gets two different foregrounds and the shared background. Changes refit the colors.',wraplength=295,style='Muted.TLabel').pack(fill='x')
         self.row_controls=ttk.Frame(palette)
         ttk.Label(self.row_controls,text='Inspect row (read-only)').pack(side='left')
         self.inspect_row=tk.IntVar(value=64)
@@ -236,18 +306,19 @@ class App(tk.Tk):
         advanced=Disclosure(panel.inner,'Advanced search').inner
         self._combo(advanced,'Search effort','search_effort',['Standard','Thorough'],callback=self.scope_changed)
         self.effort_help=tk.StringVar();ttk.Label(advanced,textvariable=self.effort_help,wraplength=295,style='Muted.TLabel').pack(fill='x',pady=4)
-        self._combo(advanced,'Palette algorithm (custom Chronocolor)','search',['Improved weighted','Legacy exhaustive'])
-        self._combo(advanced,'Search background','background',['Black','Black or white','Any Atari color'])
-        self.diversity_check=self._check(advanced,'Prefer diversity (legacy search)','diversity')
         self._combo(advanced,'Quantization targets','mapping',['Temporal blend'])
         right=ttk.Frame(body);body.add(right,weight=1)
         controls=ttk.Frame(right);controls.pack(fill='x',pady=(0,8))
         self.zoom=tk.StringVar(value='Fit');self.view=tk.StringVar(value='Temporal blend');self.smooth=tk.BooleanVar(value=False)
-        for label,var,values in [('View size',self.zoom,['Fit','50%','100%','200%','400%']),('Output',self.view,['Temporal blend','Quantization targets','Frame 1','Frame 2','Frame 3'])]:
+        for label,var,values in [('View size',self.zoom,['Fit','Pixel-perfect fit','50%','100%','200%','400%']),('Output',self.view,['Temporal blend','Quantization targets','Frame 1','Frame 2','Frame 3'])]:
             ttk.Label(controls,text=label).pack(side='left',padx=(0,5))
-            box=ttk.Combobox(controls,textvariable=var,values=values,state='readonly',width=20 if label=='Output' else 7);box.pack(side='left',padx=(0,12));box.bind('<<ComboboxSelected>>',lambda e:self.show_result())
+            box=ttk.Combobox(controls,textvariable=var,values=values,state='readonly',width=20 if label=='Output' else 16);box.pack(side='left',padx=(0,12));box.bind('<<ComboboxSelected>>',lambda e:self.show_result())
             if label=='Output':self.output_combo=box
-        ttk.Checkbutton(controls,text='Smooth display',variable=self.smooth,command=self.show_result).pack(side='left')
+        self.smooth_check=ttk.Checkbutton(controls,text='Smooth display',variable=self.smooth,command=self.show_result)
+        self.smooth_check.pack(side='left')
+        self.brightness_controls=ttk.Frame(right);self.brightness_controls.pack(fill='x',pady=(0,6))
+        self._slider(self.brightness_controls,'Brightness trim (all modes)','brightness_trim',.25,1.5)
+        ttk.Label(self.brightness_controls,text='1.00 = neutral. Lower to reduce washout. Image + colors may change it; applies to exports.',wraplength=700,style='Muted.TLabel').pack(fill='x')
         previews=ttk.Panedwindow(right,orient='horizontal');previews.pack(fill='both',expand=True)
         self.input_preview=Preview(previews,'INPUT');self.output_preview=Preview(previews,'ATARI OUTPUT')
         self.input_view=tk.StringVar(value='Adjusted input')
@@ -279,10 +350,14 @@ class App(tk.Tk):
             display=tk.StringVar();labels={mode_description(m):m for m in values}
             var.trace_add('write',lambda *args:display.set(mode_description(var.get())))
             values=list(labels)
+        if name=='height':
+            display=tk.StringVar();labels={f'48 × {h}':h for h in values}
+            var.trace_add('write',lambda *args:display.set(f'48 × {var.get()}'))
+            values=list(labels)
         box = ttk.Combobox(parent,textvariable=display,values=values,state="readonly",width=31); box.pack(fill="x")
         self.combos[name]=box
         def selected(event):
-            if name=='mode':var.set(labels[display.get()])
+            if name in ('mode','height'):var.set(labels[display.get()])
             callback() if callback else self.changed()
         box.bind("<<ComboboxSelected>>",selected)
 
@@ -313,22 +388,40 @@ class App(tk.Tk):
 
     def scope_changed(self):
         scope=self.vars['optimization_scope'].get()
-        self.scope_help.set({'Image + colors':'Adjust the image and replace its palette. Crop stays fixed.',
+        self.scope_help.set({'Image + colors':'Optimize image, brightness trim and palette together. Crop stays fixed.',
                              'Image only':'Fit tone and RGB balance. Keep the current colors and crop.',
                              'Colors only':'Replace the palette. Keep image adjustments and crop.'}.get(scope,''))
-        self.effort_help.set('Colors-only uses the selected mode’s palette search; effort applies to image fitting and joint search.' if scope=='Colors only' else 'Thorough adds image-fit sweeps and joint passes; custom Chronocolor also tries alternate starting palettes.')
+        self.effort_help.set('Colors-only uses the selected mode’s palette search; effort applies to image fitting and joint search.' if scope=='Colors only' else 'Thorough adds image-fit sweeps and joint passes; 8 color mode also tries alternate starting palettes.')
         self.combos['search_effort'].configure(state='disabled' if scope=='Colors only' else 'readonly')
+        if self.vars['mode'].get()==MODES[1] and scope=='Colors only':
+            self.effort_help.set('Standard tries up to 8 ideal-image refinements; Thorough up to 16. Both match all legal palettes using weighted colors.')
+            self.combos['search_effort'].configure(state='readonly')
+        if self.vars['mode'].get()==MODES[1]:
+            self.effort_help.set('Standard: up to 8 ideal-image trials. Thorough: up to 16. Legal palettes are matched using eight weighted colors.')
+            self.combos['search_effort'].configure(state='disabled' if scope=='Image only' else 'readonly')
         if self.vars['mode'].get()==MODES[0]:
-            self.scope_help.set('Set brightness only to 0.47. Keep contrast, input gamma, saturation, RGB balance and crop.')
-            self.effort_help.set('Classic uses the fixed 0.47 brightness preset; search effort does not apply.')
+            self.scope_help.set('Find brightness that preserves relative tones and detail. Keep colors, dithering and all other image adjustments.')
+            self.effort_help.set('Click Optimize to fit Classic brightness. Selecting the mode keeps your image adjustments. Search effort does not apply.')
+            self.combos['search_effort'].configure(state='disabled')
+
+        if self.vars['mode'].get()==MODES[4]:
+            self.effort_help.set('Scanline Color tests all 128 foregrounds for a fixed background. Per line tests all 8,256 pairs; no Standard/Thorough reduction.')
+            self.combos['search_effort'].configure(state='disabled')
+        if self.vars['mode'].get()==BUS128LINE:
+            self.effort_help.set('Shared scanline search: all legal foreground codes, actual BUS half-duty brightness, selected dithering and carried error. Paired rows require different colors.')
+            self.combos['search_effort'].configure(state='disabled')
+        if self.vars['mode'].get()==MODES[2]:
+            self.effort_help.set('Fast two-color matching. Image fitting is one direct RGB range adjustment; no Standard/Thorough search.')
             self.combos['search_effort'].configure(state='disabled')
 
     def mode_controls(self):
-        mode=self.vars['mode'].get();count=frame_count(mode);w,h=dimensions(Settings(mode=mode))
+        mode=self.vars['mode'].get();count=frame_count(mode);w,h=dimensions(Settings(mode=mode,height=self.vars['height'].get()))
+        if mode in MODES[1:5]:self.height_controls.pack(fill='x',after=self.combos['mode'])
+        else:self.height_controls.pack_forget()
         self.mode_summary.set(f'{w} × {h} · '+(f'{count} alternating frames · Flicker' if count>1 else 'Same picture every frame · Static'))
         self.export_button.configure(text='Export MovieCart…' if mode==MODES[11] else 'Export ASM + BIN…')
         self.flicker_check.configure(state='normal' if count>1 else 'disabled')
-        balance=count>1 and mode not in (MODES[0],MODES[11],*MODES[18:20])
+        balance=count>1 and mode not in (MODES[0],MODES[11],*MODES[18:20],BUS128,BUS128LINE)
         self.balance_check.configure(state='normal' if balance else 'disabled')
         if count>1:
             if not self.flicker_section.winfo_manager():self.flicker_section.pack(fill='x',pady=(2,6),before=self.combos['search_effort'].master.master)
@@ -338,15 +431,27 @@ class App(tk.Tk):
         self.flicker_summary.set('Temporal brightness scoring. '+('This format has fixed interleaving; no additional phase balancing.' if not balance else 'Balance legal phase assignments without changing the blended colors.')+' Preview persistence does not change scoring or export.')
         if mode==MODES[0]:
             self.flicker_section.title='Flicker handling · Fixed Classic RGB';self.flicker_section.render()
-            self.flicker_summary.set('Classic optimization sets brightness to 0.47 and retains its scanline interleaving. Temporal scoring does not change this preset. Persistence is preview-only.')
+            self.flicker_summary.set('Classic fits brightness to its fixed simulated light range and retains its scanline interleaving. Flicker scoring does not add another adjustment. Persistence is preview-only.')
         self.output_combo.configure(values=['Temporal blend','Quantization targets']+([f'Frame {k+1}' for k in range(count)] if count>1 else []))
         if self.view.get().startswith('Frame') and (count==1 or int(self.view.get()[-1])>count):self.view.set('Temporal blend')
-        editable=mode in (MODES[1],MODES[2]);fixed=mode in (MODES[0],MODES[7])
-        for name,enabled in [('search',mode==MODES[1]),('mapping',False),('preset',editable),('background',not fixed)]:
+        editable=mode in (MODES[1],MODES[2],BUS128);fixed=mode in (MODES[0],MODES[7])
+        if mode==MODES[1]:self.vars['search'].set(SEARCHES[0])
+        for name,enabled in [('mapping',False),('preset',editable),('background',not fixed)]:
             self.combos[name].configure(state='readonly' if enabled else 'disabled')
-        self.diversity_check.configure(state='normal' if mode==MODES[1] and self.vars['search'].get()=='Legacy exhaustive' else 'disabled')
+        self.combos['background'].configure(values=['Black','White','Any Atari color','Per line'] if mode==MODES[4] else ['Black','Black or white','Any Atari color','Any color by line'] if mode==MODES[3] else ['Black','Black or white','Any Atari color'])
+        if self.vars['background'].get() not in self.combos['background']['values']:self.vars['background'].set('Black')
         self.edit_palette_button.configure(state='normal' if editable else 'disabled')
-        self.palette_help.set('Fixed original RGB components. Choose custom mode to edit.' if mode==MODES[0] else 'All 128 NTSC colors are available; no palette search.' if mode==MODES[7] else 'Edit the foreground and background. Your choices stay fixed until you explicitly optimize colors.' if mode==MODES[2] else 'Edit components or background below. Blended colors are read-only. A preset selects Image only.' if editable else 'Colors vary by row. Inspect them below; Optimize colors explicitly to replace them.')
+        self.palette_help.set('Fixed original RGB components. Choose custom mode to edit.' if mode==MODES[0] else 'All 128 NTSC colors are available; no palette search.' if mode==MODES[7] else 'Edit the foreground and background. Your choices stay fixed until you explicitly optimize colors.' if mode in (MODES[2],BUS128) else 'Edit components or background below. Blended colors are read-only. A preset selects Image only.' if editable else 'Colors vary by row. Inspect them below; Optimize colors explicitly to replace them.')
+        if mode==MODES[1]:
+            self.palette_help.set('Weighted eight-color search with your selected dithering. Choose Black, Black or white, or Any Atari color for the shared background. Colors only keeps image adjustments fixed.')
+        if mode==MODES[3]:
+            self.palette_help.set('Starts with the current palette on every row. Optimize with Colors only or Image + colors to fit each row. Any color by line also fits a separate background for each row; Any Atari color keeps one shared background. Existing row colors are kept when adjusting the image.')
+        if mode==MODES[4]:
+            self.palette_help.set('Dither-aware foreground/background search. Any Atari color uses one shared background; Per line tests all 8,256 color pairs on every row. Choose dithering, then Optimize colors. 128/192 lines; static F6 cartridge.')
+        if mode==BUS128LINE:
+            self.bus_pair_controls.pack(fill='x',pady=5)
+            self.palette_help.set('Scanline dither-aware search tests every legal foreground on each BUS row, using its half-duty blended brightness and one shared background. Random keeps its colors until you optimize. Choose dithering first.')
+        else:self.bus_pair_controls.pack_forget()
         if not editable and not fixed:
             self.row_controls.pack(fill='x',pady=5);self.row_spinner.configure(to=h-1)
         else:self.row_controls.pack_forget()
@@ -359,10 +464,29 @@ class App(tk.Tk):
         data={name:var.get() for name,var in self.vars.items() if not name.startswith('code')}
         data['codes']=tuple(self.vars[f'code{i}'].get() for i in range(4))
         data['auto_input']=False
+        for name in ('red_offset','green_offset','blue_offset'):data[name]=getattr(self.settings,name)
         # Image/crop/dither changes re-render the existing row palettes.
         # Only a new image, new mode, or explicit color search replaces them.
-        if data['mode']==self.settings.mode:data['line_codes']=self.settings.line_codes
+        if data['mode']==self.settings.mode and data['height']==self.settings.height:data['line_codes']=self.settings.line_codes
         return normalize(Settings(**data).validate())
+
+    def randomize_bus_rows(self):
+        if self.vars['mode'].get()!=BUS128LINE:return
+        try:
+            from .bus128_dither import random_rows
+            self.settings=random_rows(self.read_settings())
+            self._sync_vars(self.settings)
+            self.changed()
+        except Exception as ex:messagebox.showerror('Random row colors',str(ex))
+
+    def bus_pair_changed(self):
+        if self.vars['mode'].get()==BUS128LINE:
+            self.settings=replace(self.settings,line_codes=())
+        self.changed()
+
+    def resolution_changed(self):
+        self.settings=replace(self.settings,line_codes=())
+        self.changed()
 
     def mode_changed(self):
         self.settings=replace(self.settings,line_codes=())
@@ -370,6 +494,10 @@ class App(tk.Tk):
         if self.vars['mode'].get()==MODES[0]:
             for i,c in enumerate(PRESETS['RGB (original Chronocolour)']):self.vars[f'code{i}'].set(c)
             self.vars['preset'].set('RGB (original Chronocolour)')
+        if self.vars['mode'].get() in (BUS128,BUS128LINE):
+            for i,c in enumerate(('0E','0E','0E','00')):self.vars[f'code{i}'].set(c)
+            self.vars['background'].set('Black')
+            self.vars['preset'].set('Custom / row colors' if self.vars['mode'].get()==BUS128LINE else 'Custom / single color')
         self.vars['mapping'].set('Temporal blend')
         self.mode_controls()
         self.changed()
@@ -436,8 +564,9 @@ class App(tk.Tk):
     def reset_adjustments(self):
         self.suspend = True
         defaults = Settings()
-        for name in ("brightness","contrast","saturation","gamma","sharpness","red","green","blue"):
+        for name in ("brightness","brightness_trim","contrast","saturation","gamma","sharpness","red","green","blue"):
             self.vars[name].set(getattr(defaults,name))
+        self.settings=replace(self.settings,red_offset=0.,green_offset=0.,blue_offset=0.)
         self.suspend = False; self.changed()
 
     def reset_crop(self):
@@ -487,10 +616,11 @@ class App(tk.Tk):
         self.convert()
 
     def open_image(self,path=None):
-        path = path or filedialog.askopenfilename(title="Open image",filetypes=[("Images","*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp"),("All files","*.*")])
+        path = path or filedialog.askopenfilename(title="Open image",filetypes=[("Images","*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp"),("All files","*.*")],**dialog_directory("open"))
         if not path:return
         try: im = load_image(path)
         except Exception as ex:messagebox.showerror("Cannot open image",str(ex));return
+        remember_directory("open",Path(path).parent)
         self.source,self.source_path = im,Path(path)
         self.settings=replace(self.settings,line_codes=())
         self.suspend=True;self.vars['crop_zoom'].set(1);self.vars['crop_x'].set(.5);self.vars['crop_y'].set(.5);self.suspend=False;self.crop_drag=None
@@ -511,7 +641,7 @@ class App(tk.Tk):
         rev=self.revision;image=self.source.copy()
         self.optimize_button.configure(state='disabled');self.undo_button.configure(state='disabled');self.compare_button.state(['disabled'])
         self.progress['value']=0
-        self.status.set(f'Optimizing {action[0].lower()}…' if action else 'Preparing preview'+(' and initializing this mode’s colors…' if s.mode in (*MODES[3:7],*MODES[8:]) and not s.line_codes else ' with current colors…'))
+        self.status.set(f'Optimizing {action[0].lower()}…' if action else 'Preparing preview'+(' and initializing this mode’s colors…' if s.mode in (*MODES[5:7],*MODES[8:]) and not s.line_codes else ' with current colors…'))
         def work():
             try:
                 start=time.perf_counter();before=None
@@ -521,7 +651,7 @@ class App(tk.Tk):
                     scope,effort=action;thorough=effort=='Thorough'
                     if scope=='Image + colors':s2=joint_optimize(image,s2,thorough,progress,cancel)
                     elif scope=='Colors only':s2=search_palette(prepare(image,s2),s2,progress,cancel)
-                    else:s2=fit_controls(image,s2,global_fit=thorough,cancel=cancel)
+                    else:s2=fit_controls(image,s2,global_fit=thorough,cancel=cancel,progress=progress)
                 else:s2=s
                 result=convert_image(image,s2,cancel)
                 self.messages.put(('done',rev,result,before,action,time.perf_counter()-start))
@@ -536,13 +666,24 @@ class App(tk.Tk):
 
     def optimization_summary(self,before,after):
         changes=[]
-        for name in ('brightness','contrast','saturation','gamma','red','green','blue'):
+        for name in ('brightness','brightness_trim','contrast','saturation','gamma','red','green','blue'):
             old,new=getattr(before,name),getattr(after,name)
-            if abs(old-new)>.001:changes.append(f'{name.title()} {old:.2f} → {new:.2f}')
+            if abs(old-new)>.001:changes.append(f'{name.replace('_',' ').title()} {old:.2f} → {new:.2f}')
         if before.codes!=after.codes or before.line_codes!=after.line_codes:changes.append('colors updated')
         return '; '.join(changes) or 'Current settings retained — no better candidate found.'
 
+    def _update_heartbeat(self):
+        # Runs on Tk's existing polling loop: a stopped pulse means the UI
+        # is not processing events. It is not a measure of worker progress.
+        base=(255,193,92) if self.busy else (76,214,160)
+        phase=(time.monotonic()%1.6)/1.6
+        strength=.35+.65*(1-abs(phase*2-1))
+        background=tuple(int(BG[i:i+2],16) for i in (1,3,5))
+        color='#'+''.join(f'{round(b+(c-b)*strength):02x}' for b,c in zip(background,base))
+        self.heartbeat_canvas.itemconfigure('heartbeat-logo',fill=color)
+
     def _poll(self):
+        self.poll_job=None
         try:
             while True:
                 msg=self.messages.get_nowait();kind,rev=msg[:2]
@@ -565,14 +706,18 @@ class App(tk.Tk):
                 elif kind=='cancelled':self.status.set('Cancelled. Previous completed result retained.')
                 else:self.status.set('Conversion failed: '+msg[2])
         except queue.Empty:pass
-        self.after(80,self._poll)
+        self._update_heartbeat()
+        self.poll_job=self.after(80,self._poll)
 
     def show_result(self):
+        self.smooth_check.configure(state='disabled' if self.zoom.get()=='Pixel-perfect fit' else 'normal')
         if self.result is None:return
         comparing=self.compare_before.get() and self.before_result is not None
         adjusted,indices,s = self.before_result if comparing else self.result
         self.output_preview.heading.configure(text='BEFORE OPTIMIZATION' if comparing else 'ATARI OUTPUT')
         self.output_notice.set('Comparison only — export uses the current result. Undo restores this version.' if comparing else 'Light-corrected preview · estimated Atari colors. Check the cartridge in Stella.')
+        if any(abs(v)>.001 for v in (s.red_offset,s.green_offset,s.blue_offset)):
+            self.output_notice.set(self.output_notice.get()+f' Fitted RGB offsets: {s.red_offset:.1f}, {s.green_offset:.1f}, {s.blue_offset:.1f}.')
         view = self.view.get()
         if view.startswith("Frame"): out = Image.fromarray(frame_pixels(indices,s.codes,s.line_codes,s.mode)[(int(view[-1])-1)%len(frame_pixels(indices,s.codes,s.line_codes,s.mode))])
         elif view=='Quantization targets':
@@ -581,12 +726,15 @@ class App(tk.Tk):
         else:out=Image.fromarray(render(indices,s))
         w,h=dimensions(s)
         temporal=s.mode in (MODES[0],MODES[1],MODES[3])
-        self.mode_info.set(f'{mode_description(s.mode)} • {w} × {h} • '+(f'{frame_count(s.mode)} alternating frames' if frame_count(s.mode)>1 else 'same picture every frame')+f' • {cartridge_size(s.mode)//1024} KB {cartridge_type(s.mode)} ROM'+('\nScanline palettes: swatches show the selected row.' if s.line_codes else ''))
+        self.mode_info.set(f'{mode_description(s.mode)} • {w} × {h} • '+(f'{frame_count(s.mode)} alternating frames' if frame_count(s.mode)>1 else 'same picture every frame')+f' • {cartridge_size(s)//1024} KB {cartridge_type(s)} ROM'+('\nScanline palettes: swatches show the selected row.' if s.line_codes else ''))
         original=self.input_view.get()=='Original input'
         for preview,im in ((self.input_preview,self.source if original else adjusted),(self.output_preview,out)):
             preview.image = im; preview.zoom = self.zoom.get(); preview.smooth = self.smooth.get(); preview.aspect = 'Raw pixels' if preview is self.input_preview and original else display_aspect(s); preview.draw()
         if s.mode==MODES[11]:self.mode_info.set('MovieCart — Flicker • 80 × 192 (190 content rows) • two alternating fields\n30-second silent .mvc stream • MovieCart hardware, not Harmony')
         if s.mode in MODES[8:11]:self.mode_info.set(self.mode_info.get()+'\nSix multiplexed sprite strips; narrow, centered raster • hardware untested')
+        if s.mode==BUS128LINE:self.mode_info.set(self.mode_info.get()+'\nOne foreground per row, shared background; fixed spatial interleaving • BUS2 cartridge • hardware untested')
+        if s.mode==BUS128:self.mode_info.set(self.mode_info.get()+'\nSingle foreground; fixed spatial interleaving • BUS2 cartridge • hardware untested')
+        if s.mode==BUS128LINE and s.bus_pair_rows:self.mode_info.set(self.mode_info.get()+'\nPaired rows: two distinct foregrounds per pair • shared background')
         if s.mode==MODES[7]:self.mode_info.set(self.mode_info.get()+'\n128 colors available per sample • 9 color clocks wide • Stella verified; hardware untested')
         if s.mode==MODES[12] and s.balance_frames:
             shared=all(r[3]==r[7] for r in s.line_codes)
@@ -603,7 +751,7 @@ class App(tk.Tk):
         if not hasattr(self,'swatches') or not self.result:return
         s=(self.before_result if self.compare_before.get() and self.before_result is not None else self.result)[2]
         self.swatches.delete('all');width=max(1,self.swatches.winfo_width())
-        editable=s.mode in (MODES[1],MODES[2]) and not self.compare_before.get() and self.result_current
+        editable=s.mode in (MODES[1],MODES[2],BUS128) and not self.compare_before.get() and self.result_current
         self.swatches.configure(cursor='hand2' if editable else '')
         if s.mode==MODES[7]:
             self.swatches.create_text(0,8,text='FULL NTSC PALETTE · 128 colors · read-only',anchor='w',fill=MUTED,font=('Segoe UI',8))
@@ -617,11 +765,12 @@ class App(tk.Tk):
             except (ValueError,tk.TclError):row=len(s.line_codes)//2
             codes=s.line_codes[row][:4] if s.mode==MODES[17] else s.line_codes[row]
             title=f'ROW {row} COLORS · read-only · optimize colors to refit'
+            if s.mode==BUS128LINE and s.bus_pair_rows:title=f'PAIR {row//2}: ROWS {row//2*2}–{row//2*2+1} · inspecting row {row}'
             labels=[f'Cell {k+1}' for k in range(10)]+['BG'] if s.mode==MODES[11] else ['A 1','A 2','A 3','A BG','B 1','B 2','B 3','B BG'] if len(codes)==8 else ['L FG','L BG','R FG','R BG'] if s.mode==MODES[6] else ['PF','Sprite 1','Sprite 2','BG'] if s.mode==MODES[17] else ['FG','FG','FG','BG'] if s.mode in MODES[18:20] else ['Comp. 1','Comp. 2','Comp. 3','BG']
-            if s.mode in MODES[18:20]:codes=(codes[0],codes[3]);labels=['Foreground','Background']
+            if s.mode in (*MODES[18:20],BUS128LINE):codes=(codes[0],codes[3]);labels=['Foreground','Background']
             colors=[TIA[CODES.index(c)] for c in codes];tags=[None]*len(codes)
             labels=[label+'\n$'+code for label,code in zip(labels,codes)]
-        elif s.mode==MODES[2]:
+        elif s.mode in (MODES[2],BUS128):
             title='TWO COLORS · click foreground or background to edit'
             colors=[TIA[CODES.index(s.codes[k])] for k in (0,3)]
             labels=['Foreground\n$'+s.codes[0],'Background\n$'+s.codes[3]];tags=['component0','component3']
@@ -645,13 +794,13 @@ class App(tk.Tk):
                     self.open_palette_picker(int(tag[-1]));return
 
     def open_palette_picker(self,component=None,output=None):
-        if self.vars['mode'].get() in MODES[3:]:
+        if self.vars['mode'].get()!=BUS128 and self.vars['mode'].get() in MODES[3:]:
             self.status.set('Scanline colors are read-only. Choose Colors only or Image + colors to refit all rows.');return
         if self.vars['mode'].get()==MODES[0]:
-            self.status.set('Chronocolor classic locks the original RGB colors. Choose Chronocolor custom to edit them.');return
+            self.status.set('Chronocolor classic locks the original RGB colors. Choose 8 color mode to edit them.');return
         codes=tuple(self.vars[f'code{i}'].get() for i in range(4))
         components=None
-        if self.vars['mode'].get()==MODES[2]:
+        if self.vars['mode'].get() in (MODES[2],BUS128):
             component=3 if component==3 or output==7 else 0
             output=None;components=(0,3)
         def apply(codes):
@@ -687,13 +836,17 @@ class App(tk.Tk):
         if s.mode in MODES[17:20]:
             from .extended import NOTES
             with (folder/'mode.txt').open('a',encoding='utf-8') as note:note.write(NOTES[s.mode]+'\n')
-        (folder/"README.txt").write_text(f"Atari 2600 Image Optimizer — NTSC {cartridge_size(s.mode)//1024} KB {cartridge_type(s.mode)} Atari 2600 cartridge\nMode: {mode_description(s.mode)}\nLogical size: {dimensions(s)}\n\nChris Martin's Chrono2 converter. Original Chronocolour kernel and sprite technique: Andrew Davie, with acknowledgements to Eckhard Stohlberg and Thomas Jentzsch. New raster kernels developed for Atari 2600 Image Optimizer.\n\nimage.asm is self-contained DASM source. Rebuild: dasm image.asm -f3 -oimage.bin\nimage.bin is headerless, {cartridge_size(s.mode)//1024} KB {cartridge_type(s.mode)}. Open in Stella using NTSC.\nColor model: sRGB-referred NTSC palette, linear-light temporal blend, D65 CIEDE2000 matching. No automatic display gain.\npreview.png is an estimated display image, not a hardware capture.\nReal hardware/Harmony testing remains the user's validation step.\n",encoding="utf-8")
+        (folder/"README.txt").write_text(f"Atari 2600 Image Optimizer — NTSC {cartridge_size(s)//1024} KB {cartridge_type(s)} Atari 2600 cartridge\nMode: {mode_description(s.mode)}\nLogical size: {dimensions(s)}\n\nChris Martin's Chrono2 converter. Original Chronocolour kernel and sprite technique: Andrew Davie, with acknowledgements to Eckhard Stohlberg and Thomas Jentzsch. New raster kernels developed for Atari 2600 Image Optimizer.\n\nimage.asm is self-contained DASM source. Rebuild: dasm image.asm -f3 -oimage.bin\nimage.bin is headerless, {cartridge_size(s)//1024} KB {cartridge_type(s)}. Open in Stella using NTSC.\nColor model: sRGB-referred NTSC palette, linear-light temporal blend, D65 CIEDE2000 matching. No automatic display gain.\npreview.png is an estimated display image, not a hardware capture.\nReal hardware/Harmony testing remains the user's validation step.\n",encoding="utf-8")
         if s.mode==MODES[11]:
             (folder/"README.txt").write_text("MovieCart still frame — silent, 30 seconds, NTSC.\nOpen image.mvc with Stella 7 or later (MVC mapper), or copy to MovieCart media.\nThis is a stream, not a Harmony cartridge ROM; renaming it .bin will not work.\nTwo alternating fields provide 80 × 192 samples with 190 safe content rows.\npreview.png averages the fields; use ATARI Rendering Preview to inspect flicker.\nSettings and image-data.npz reproduce the stream with chrono.moviecart.binary.\nRob Bairos MovieCart format: https://github.com/lodefmode/moviecart\nReal hardware remains untested.\n",encoding="utf-8")
             np.savez_compressed(folder/"image-data.npz",indices=indices,line_codes=np.array(s.line_codes))
         if s.mode in MODES[8:]:
             doc=Path(__file__).resolve().parents[1]/"ADVANCED-MODES.md"
             if doc.exists():(folder/doc.name).write_bytes(doc.read_bytes())
+        if s.mode in (BUS128,BUS128LINE):
+            with (folder/'README.txt').open('a',encoding='utf-8') as note:
+                note.write('\n128x200 BUS2 bitmap. Single-color mode has one foreground; Color per Line has a foreground per row. Both use a shared background. Alternating spatial fields; 50% foreground duty. Sprite timing derived from cd-w / SpiceWare 128bus_20170120. Preserved optional BUS driver; see BUS-RESEARCH.md. Physical Harmony compatibility untested.\n')
+            (folder/'BUS-RESEARCH.md').write_text((Path(__file__).resolve().parents[1]/'BUS-RESEARCH.md').read_text(encoding='utf-8'),encoding='utf-8')
         if s.mode==MODES[7]:
             with (folder/'README.txt').open('a',encoding='utf-8') as note:
                 note.write('\nExperimental BUS2 color raster: 16 x 192 independent NTSC colors; 9 color clocks per sample. Use Stella mapper BUS. Includes a preserved third-party BUS driver from the Stella 7.0 reference archive. See BUS-RESEARCH.md for credits, unverified physical compatibility, and outstanding driver redistribution terms.\n')
@@ -703,35 +856,39 @@ class App(tk.Tk):
 
     def export(self):
         if not self.ready():return
-        parent = filedialog.askdirectory(title="Choose the parent folder for a new export bundle")
+        parent = filedialog.askdirectory(title="Choose the parent folder for a new export bundle",**dialog_directory("save"))
         if not parent:return
         stem = self.source_path.stem if self.source_path else "calibration"
         folder = Path(parent)/f"{stem}-chrono2-{time.strftime('%Y%m%d-%H%M%S')}"
         try:self.export_to(folder)
         except Exception as ex:messagebox.showerror("Export failed",str(ex));return
+        remember_directory("save",parent)
         self.status.set(f"Exported ASM, BIN, settings and preview to {folder}")
 
     def save_settings(self):
-        path = filedialog.asksaveasfilename(defaultextension=".json",filetypes=[("Conversion settings","*.json")])
+        path = filedialog.asksaveasfilename(defaultextension=".json",filetypes=[("Conversion settings","*.json")],**dialog_directory("save"))
         if path:
             try:self.read_settings().save(path)
             except Exception as ex:messagebox.showerror("Settings",str(ex))
+            else:remember_directory("save",Path(path).parent)
 
     def load_settings(self):
-        path = filedialog.askopenfilename(filetypes=[("Conversion settings","*.json")])
+        path = filedialog.askopenfilename(filetypes=[("Conversion settings","*.json")],**dialog_directory("open"))
         if path:
             try:self.settings=replace(Settings.load(path),auto_input=False);self._sync_vars(self.settings);self.changed()
             except Exception as ex:messagebox.showerror("Settings",str(ex))
+            else:remember_directory("open",Path(path).parent)
 
     def save_preview(self):
         if not self.ready():return
-        path = filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG image","*.png")])
+        path = filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG image","*.png")],**dialog_directory("save"))
         if path:
             comparing=self.compare_before.get()
             try:
                 self.compare_before.set(False);self.show_result();self.output_preview.image.save(path)
             finally:
                 self.compare_before.set(comparing);self.show_result()
+            remember_directory("save",Path(path).parent)
             self.status.set("Saved the selected output view at its logical resolution.")
 
     def export_animated_preview(self):
@@ -744,12 +901,13 @@ class App(tk.Tk):
 
     def save_gif(self):
         if not self.ready():return
-        path = filedialog.asksaveasfilename(defaultextension=".gif",filetypes=[("Animated GIF","*.gif")])
+        path = filedialog.asksaveasfilename(defaultextension=".gif",filetypes=[("Animated GIF","*.gif")],**dialog_directory("save"))
         if path:
             _,indices,s = self.result
-            size = (512,384) if s.mode==MODES[17] else (384,384) if s.mode==MODES[18] else (288,576) if s.mode==MODES[19] else (480,576) if s.mode==MODES[11] else (288,576) if s.mode in (*MODES[8:11],*MODES[14:]) else (576,480) if s.mode==MODES[7] else (512,384) if s.mode in MODES[5:8] else {"Atari pixels 2:1":(384,512),"Display 4:3":(512,384),"Raw pixels":dimensions(s)}[s.aspect]
+            size = (512,400) if s.mode in (BUS128,BUS128LINE) else (512,384) if s.mode==MODES[17] else (384,384) if s.mode==MODES[18] else (288,576) if s.mode==MODES[19] else (480,576) if s.mode==MODES[11] else (288,576) if s.mode in (*MODES[8:11],*MODES[14:]) else (576,480) if s.mode==MODES[7] else (512,384) if s.mode in MODES[5:8] else {"Atari pixels 2:1":(dimensions(s)[0]*8,dimensions(s)[1]*4),"Display 4:3":(512,384),"Raw pixels":dimensions(s)}[s.aspect]
             frames = [Image.fromarray(f).resize(size,Image.Resampling.NEAREST) for f in frame_pixels(indices,s.codes,s.line_codes,s.mode)]
             frames[0].save(path,save_all=True,append_images=frames[1:],duration=100,loop=0)
+            remember_directory("save",Path(path).parent)
             self.status.set("Saved a slowed field/frame illustration (100 ms/frame), not an NTSC timing simulation.")
 
     def locate_stella(self):
@@ -781,13 +939,15 @@ class App(tk.Tk):
             s=self.result[2]
             rom = folder/("preview.mvc" if s.mode==MODES[11] else "preview.bin")
             rom.write_bytes(binary(self.result[1],s.codes,s.mode,s.line_codes))
-            subprocess.Popen([str(exe),"-format","NTSC","-type",cartridge_type(s.mode),str(rom)])
+            subprocess.Popen([str(exe),"-format","NTSC","-type",cartridge_type(s),str(rom)])
         except OSError as ex:
             messagebox.showerror('Could not open Stella',f'{ex}\n\nUse File → Locate / change Stella to select another installation.',parent=self)
             return
-        self.status.set('Opened the current conversion in Stella (NTSC / '+cartridge_type(s.mode)+').')
+        self.status.set('Opened the current conversion in Stella (NTSC / '+cartridge_type(s)+').')
 
     def close(self):
+        if self.poll_job is not None:
+            self.after_cancel(self.poll_job);self.poll_job=None
         if self.crop_preview_job is not None:self.after_cancel(self.crop_preview_job)
         if self.animated_preview is not None and self.animated_preview.winfo_exists():
             self.animated_preview.close()

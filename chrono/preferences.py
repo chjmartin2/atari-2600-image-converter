@@ -36,3 +36,36 @@ def save_stella_path(path):
     temporary.write_text(json.dumps(data,indent=2),encoding='utf-8')
     temporary.replace(destination)
     return path
+
+
+def dialog_directory(kind):
+    """Separate open/save histories; always override Tk's shared last directory."""
+    if kind not in ('open', 'save'):
+        raise ValueError('Unknown dialog history')
+    saved = read_preferences().get(f'last_{kind}_directory')
+    try:
+        if isinstance(saved, str) and saved and Path(saved).is_dir():
+            return {'initialdir': saved}
+    except (OSError, ValueError):
+        pass
+    return {'initialdir': str(Path.home())}
+
+
+def remember_directory(kind, directory):
+    """Remember successful user operations without failing them on a prefs error."""
+    if kind not in ('open', 'save'):
+        raise ValueError('Unknown dialog history')
+    try:
+        directory = Path(directory).resolve()
+        if not directory.is_dir():
+            return False
+        destination = preferences_path()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data = read_preferences()
+        data[f'last_{kind}_directory'] = str(directory)
+        temporary = destination.with_suffix('.tmp')
+        temporary.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        temporary.replace(destination)
+        return True
+    except (OSError, ValueError):
+        return False

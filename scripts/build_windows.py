@@ -5,6 +5,7 @@ root=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(root))
 from chrono.drivers import TEMPLATES,SPECS
 from chrono import __version__
+subprocess.run([sys.executable,str(root/'scripts/build_mixed_palettes.py')],cwd=root,check=True)
 output=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else root/'private/windows-build'
 output.mkdir(parents=True,exist_ok=True)
 name='Atari-2600-Image-Optimizer'
@@ -18,13 +19,16 @@ for path in sorted((root/'chrono/resources').iterdir()):
     if path.suffix=='.bin' and path.stem in TEMPLATES:
         assert not any(path.read_bytes()[:SPECS[TEMPLATES[path.stem]][1]]),'Driver-bearing public template: '+path.name
     args+=['--add-data',str(path)+':chrono/resources']
+args+=['--add-data',str(root/'chrono/resources/mixed-palettes')+':chrono/resources/mixed-palettes']
 for name_ in ('ADVANCED-MODES.md','BUS-RESEARCH.md'):
     args+=['--add-data',str(root/name_)+':.']
+subprocess.run([sys.executable,str(root/'scripts/build_palette_matcher.py')],cwd=root,check=True)
+args+=['--add-binary',str(root/'chrono/native/palette_match.dll')+':chrono/native']
 args+=[str(root/'run.py')]
 subprocess.run(args,cwd=root,check=True)
 bundle=output/'dist'/name
 licenses=bundle/'third-party-licenses';licenses.mkdir(exist_ok=True)
-for package in ('numpy','pillow','pyinstaller'):
+for package in ('numpy','pillow','scipy','pyinstaller'):
     distribution=importlib.metadata.distribution(package)
     for item in distribution.files or ():
         if 'license' in str(item).lower() and distribution.locate_file(item).is_file():

@@ -27,3 +27,19 @@ MovieCart format and display design: Rob Bairos. DPC+ driver: Chris Walton, Fred
 ## Atari 2600 Image Optimizer 0.4.0
 
 This is the new application name for the maintained Python continuation of Chrono2. Original author credits and historical filenames are preserved. Public ROM templates reserve zero-filled slots for externally obtained BUS/DPC+/CDFJ+ drivers; setup fetches them from the pinned sources recorded in chrono/drivers.py. No such driver bytes or full driver-bearing assembly templates are distributed by this repository.
+
+
+## BUS 128x200 Single Color
+
+The 128-pixel sprite timing in `chrono/bus128_rom.py` derives from cd-w (Chris Walton) and SpiceWare (Darrell Spice Jr.), specifically `128bus_20170120.bin` in the official Stella 7.0 test archive. Their original alternating sprite schedule and B0/C0 positioning test are retained; the fixed-image ARM initialization, stream packing, conversion and GUI integration are new. See BUS-RESEARCH.md for provenance and exact layout. No original demo images or ARM application are distributed. Optional BUS driver handling and redistribution limitations remain as above; no blanket license is asserted for this derivative kernel.
+
+The 128x200 Color per Line BUS2 mode extends the same cd-w / Chris Walton and SpiceWare / Darrell Spice Jr. sprite timing with unrolled row-color writes and cycle-balanced bank bridges. See BUS-RESEARCH.md for derivation, optional driver provenance, and verification limits.
+
+
+## Independent Chronocolor row backgrounds
+
+`chrono/chrono_line_rom.py` extends the unrolled `chrono/scanline_rom.py` raster
+into three temporal phases. It retains the Davie / Stohlberg / Jentzsch 48-pixel
+multiplexing acknowledgements. EF bank switching follows the interface documented
+in [Stella's EF cartridge implementation](https://github.com/stella-emu/stella/blob/master/src/emucore/CartEF.hxx).
+No emulator source or cartridge driver binary is embedded in these templates.

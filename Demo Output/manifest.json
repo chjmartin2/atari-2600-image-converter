@@ -1,0 +1,112 @@
+[
+  {
+    "id": "cyberwoman",
+    "title": "Cyberwoman",
+    "filename": "cyberwoman.bin",
+    "mode": "Bus Stuffing - 128x200 Color per Line",
+    "height": 200,
+    "bytes": 32768,
+    "sha256": "0e77042ef33edc5bdaf64a69a8ed4dc30eee6a18ab4e830720292550074a8550",
+    "image": "cyberwom.png"
+  },
+  {
+    "id": "eagle",
+    "title": "Eagle",
+    "filename": "eagle.bin",
+    "mode": "8 color mode",
+    "height": 192,
+    "bytes": 16384,
+    "sha256": "1db6f38d5d6ddd2483d2772917dbde3542c3201e1b53c5cd4b3e45665a691ca0",
+    "image": "eagle-animated.webp"
+  },
+  {
+    "id": "elvira",
+    "title": "Elvira",
+    "filename": "elvira.bin",
+    "mode": "8 color per line mode",
+    "height": 192,
+    "bytes": 16384,
+    "sha256": "c55b8fcc75b5c15605e9262824ae055dc7b186fd76a4d39548352e31438ac512",
+    "image": "ELVIRA-animated.webp"
+  },
+  {
+    "id": "escher",
+    "title": "Escher",
+    "filename": "escher.bin",
+    "mode": "Bus Stuffing - 128x200 Single Color",
+    "height": 200,
+    "bytes": 32768,
+    "sha256": "c80b75f4cd985684a0793581cb2c18bc7cd6d2d89243cf108256a6e1fe7b4c31",
+    "image": "escher-animated.webp"
+  },
+  {
+    "id": "ghostbusters",
+    "title": "Ghostbusters",
+    "filename": "ghostbusters.bin",
+    "mode": "Two Color (2 frames)",
+    "height": 128,
+    "bytes": 8192,
+    "sha256": "725eb649bb0ec10ac045fca42a7c4a145ed03c314a9a566651a218107dedf712",
+    "image": "gbust_SM-animated.webp"
+  },
+  {
+    "id": "homer",
+    "title": "Homer",
+    "filename": "homer.bin",
+    "mode": "Two Color (2 frames)",
+    "height": 128,
+    "bytes": 8192,
+    "sha256": "aab23945f102a95e4cc9e4fbc395dabf41031c97bf67cd66ec61db50116e0527",
+    "image": "homer-animated.webp"
+  },
+  {
+    "id": "harry-potter",
+    "title": "Harry Potter",
+    "filename": "harry-potter.bin",
+    "mode": "8 color per line mode",
+    "height": 192,
+    "bytes": 16384,
+    "sha256": "4936a789983eebaa71ca944dacc851f7c29ffbd450558097d1653acaea1dc429",
+    "image": "HPOT-animated.webp"
+  },
+  {
+    "id": "mr-t",
+    "title": "Mr. T",
+    "filename": "mr-t.bin",
+    "mode": "8 color mode",
+    "height": 128,
+    "bytes": 4096,
+    "sha256": "fe3252d66923eacf07d4be2fe7a92a5ae39486aeb4240d68ab26e4ad23670da8",
+    "image": "mrt-animated.webp"
+  },
+  {
+    "id": "running-man",
+    "title": "Running man",
+    "filename": "running-man.bin",
+    "mode": "Two Color (2 frames)",
+    "height": 128,
+    "bytes": 8192,
+    "sha256": "5b320511d6b7191d7bc65fa26bbc7c54d6d45c49727a551f73780708e7a5aefd",
+    "image": "runman-animated.webp"
+  },
+  {
+    "id": "sonic",
+    "title": "Sonic",
+    "filename": "sonic.bin",
+    "mode": "8 color per line mode",
+    "height": 128,
+    "bytes": 4096,
+    "sha256": "c4d752f9404f67a37bce62eb78943690d6ec98e0db23211a597cee8e5e374941",
+    "image": "sonic-animated.webp"
+  },
+  {
+    "id": "tron",
+    "title": "Tron",
+    "filename": "tron.bin",
+    "mode": "8 color per line mode",
+    "height": 192,
+    "bytes": 65536,
+    "sha256": "50e22096a9ceb9ed862103b5a993d8950c01a868b849b6ddf911dcbe7280d374",
+    "image": "tron2-animated.webp"
+  }
+]

@@ -4,7 +4,7 @@ Research and implementation: October 3, 2026. Chrono2 Studio 0.2.2-dev.
 
 ## What is implemented
 
-Select **Bus stuffing (experimental)**. This is a genuine BUS2 cartridge, with a
+Select **Bus Stuffing - 16x192 Color Raster — Static**. This is a genuine BUS2 cartridge, with a
 cartridge ARM initializer, display RAM, a datastream and stuffed STY writes to
 COLUBK. It exports a 32 KiB BIN and self-contained DASM assembly. Open Stella
 selects the BUS mapper automatically through its command-line argument.
@@ -95,3 +95,47 @@ release of the driver or ROMs containing it. No public push is part of this task
 
 Rebuild: `python scripts/rebuild_bus.py <path-to-dasm>`.
 Emulator verification: `python scripts/verify_stella_bus.py <path-to-Stella.exe>`.
+
+
+## 128x200 Single Color (October 10, 2026, local development)
+
+`chrono/bus128_rom.py` adapts the cycle-exact sprite schedule from cd-w / Chris Walton and SpiceWare / Darrell Spice Jr.'s `128bus_20170120.bin`, preserved in the official Stella 7.0 source archive. The source demo and discussion are at https://forums.atariage.com/topic/258191-bus-stuffing-demos/page/4/#findComment-3676378 . The original driver remains an optional external dependency; its checksum and retrieval are unchanged. No demo artwork, menus, or original ARM application is included. No additional redistribution rights are asserted over the derivative timing code.
+
+The new fixed-image initializer copies 3200 bytes to BUS display RAM, maps GRP0 and GRP1 to stream 0, and initializes the stream increment. Two 1600-byte streams each encode 200 rows of eight sprite bytes. The 6507 selects the appropriate stream and alternates the original sprite layouts. Both sprite colors are set to one chosen foreground; COLUBK holds one chosen background throughout the picture. A position self-test retains the original B0/C0 HMP0 compatibility handling.
+
+Visible image: 128 color clocks by 200 lines, centered at x=16..143. Normal preview aspect is 256:200; Raw pixels is 128:200. This is spatially interleaved flicker at a steady 262 scanlines per field, not half-line television interlace. Each logical pixel is visible in one of the two fields; the other field supplies background light. Foreground targets are therefore the linear-light mixture of foreground and background, while background pixels remain background.
+
+The two row layouts cover strips starting at `(0,16,32,48,64,88,96,120)` and `(8,24,40,56,72,80,104,112)`. Successive rows swap layouts; successive fields reverse them. The chronological stream byte order differs from spatial order because of sprite resets: `(32,0,16,48,64,88,96,120)` and `(40,8,24,80,56,72,104,112)`.
+
+Verification: DASM export parity; exact random-bitmap packing roundtrip; settings migration; shared palette/field-light agreement; GUI manual color, crop, optimization, rendering preview and exports. `scripts/verify_stella_bus128.py` compares all 25,600 logical pixels in each of three consecutive snapshots with the generated preview, including first/last rows and both phases. Both white-on-black and cyan-on-colored-background fixtures pass, each with 262/262/262 scanlines. This is emulator verification, not physical console validation. `scripts/build_bus128.py` rebuilds the public template with a zero-filled 2 KiB driver slot.
+
+
+## 128x200 Color per Line (October 10, 2026, local development)
+
+`chrono/bus128_line_rom.py` preserves the preceding mode's 128x200 coverage and stream ordering, but writes COLUP0 and COLUP1 for each row. The background remains global. A 4000-byte stream holds two 2000-byte fields: two identical foreground bytes followed by eight sprite bytes per row. The ARM initializer copies the stream from ROM offset $1000 to display RAM and maps both color registers plus GRP0/GRP1 to stream 0.
+
+The kernel unrolls each field into three banks (2/3/4 and 5/6/7). At the A/B boundary, the original seven-cycle counter/branch becomes six cycles of zero-page STY color writes plus one extra cycle in the following LDX (RAM instead of immediate). NUSIZ1 moves one cycle earlier inside HBLANK; all subsequent visible writes and sprite resets retain their timing. Absolute STY is deliberately avoided: the BUS2 driver intercepts zero-page STY only. At the B/A boundary, two STY instructions plus NOP replace the eight-cycle counter/branch.
+
+Fixed-address bank bridges replace a four-cycle delay with BIT at the bank hotspot. The incoming bank supplies the same row tail at the same address. A three-cycle RAM LDX plus three-cycle JMP replaces the original two-cycle immediate LDX plus four-cycle NOP delay. This keeps both bank transitions pixel-aligned. The first and last rows are included; fields remain 262 scanlines.
+
+Palette fitting searches all allowed global backgrounds and all 128 foregrounds for each row. Weighted 32-level RGB histogram centroids bound the CIEDE2000 calculations while retaining separate row distributions; it is a histogram approximation, not an exact fit to every original RGB sample. The targets include the true 50% foreground duty. The chosen row colors remain fixed for Image only optimization and ordinary image adjustments.
+
+Rebuild with `python scripts/build_bus128_line.py <DASM>`. Verify with `python scripts/verify_stella_bus128_line.py <Stella.exe>`. The test compares every pixel across three consecutive fields with 200 changing row colors, using both black and colored backgrounds, and checks 262/262/262 scanlines. Unit tests also cover stream reconstruction, matching, black-border dithering, invalid row palettes, settings persistence, animated export, and byte-for-byte DASM parity. `tests/gui_bus128_line_smoke.py` exercises selection, row inspection, crop, any-background search, preserved row colors during Image only optimization, previews and ASM/BIN export. Driver slots in the public template are zero-filled. Physical console/Harmony testing remains outstanding.
+
+
+### Paired-row palette fitting
+
+`chrono/bus128_pairs.py` implements the optional strict two-row palette fit. Each pair uses foreground A on its upper row, foreground B on its lower row, and the same global background. The two foregrounds must differ from each other and the background in actual palette RGB, not just code value. Each pixel still uses one bit and the existing two-field 50% duty cycle.
+
+After screening shared backgrounds with independent row fits, the search evaluates up to four backgrounds. Per-pair foreground candidates include the best four fits for each original row and their linear-light average plus a best candidate from each TIA hue family. For each ordered foreground pair, it constructs the two undithered row outputs using their actual temporal target colors. The score is 80% CIEDE2000 error of the linear-light row average and 20% mean error at the original rows. Both color assignments are considered. Existing perceptual input optimization uses the same 80/20 spatial emphasis, retaining its detail and temporal-flicker terms. The final selected dither still runs on the full 128x200 image with its row palettes; no extra error is routed downward.
+
+This is a color-variety heuristic with deliberate stripe/detail tradeoffs, not a new display mode or new kernel. Unit and GUI checks cover strict pair uniqueness, flat fields, clean black borders, local pair fitting, linear averaging, settings compatibility, scoring, toggle/refit behavior, reset and exports.
+
+
+### Full-raster dither refinement and random tables
+
+`chrono/bus128_line.propose` and `chrono/bus128_pairs.propose` provide bounded candidate tables from their original undithered searches. Independent fitting includes alternate foreground rankings; paired fitting includes the next-best ordered color pairs. `chrono/bus128_dither.refine` then runs complete 128x200 candidates through the same `core.quantize` function used by final conversion, with the selected method, strength and serpentine setting. Every trial starts at the top of the original image, so error crossing row boundaries is recalculated for that candidate's actual palettes. Selection uses the real temporal render and the existing perceptual/flicker score, including paired spatial scoring when enabled.
+
+Standard considers two unique initial tables plus a valid current table and one residual-feedback proposal; Thorough considers four initial tables and two feedback proposals. Feedback smooths actual linear-light residuals horizontally over eight-pixel cells (and over each row pair when paired fitting is active), solely to guide another palette proposal. Every proposal is rescored against the same original image. The best evaluated table survives, so this pass cannot regress its starting table under the selected score. None and zero-strength searches bypass refinement.
+
+Random row generation samples unique physical palette RGB colors, excluding the background and preceding row, then stores the resulting 200-row table. It respects the strict paired-row constraint as well. No new cartridge format, driver, TIA timing or packing changes are involved.

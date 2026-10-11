@@ -1,2 +1,2 @@
 """Atari 2600 Image Optimizer — an Atari 2600 image converter."""
-__version__ = "0.5.1"
+__version__ = "0.6.0"

@@ -48,13 +48,22 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual(load_image(path).getpixel((0,0)),(0,0,0))
             s=Settings(codes=PRESETS['Blue'],preset='Blue');path=Path(temp)/'settings.json';s.save(path)
             self.assertEqual(tuple(Settings.load(path).codes),s.codes)
+            # Previous releases saved these labels as mode identifiers.
+            for old,new in (('Chronocolor custom',MODES[1]),('Chronocolor per line',MODES[3])):
+                original=Settings(mode=new,brightness=.63,codes=PRESETS['Blue'])
+                original.save(path);data=json.loads(path.read_text(encoding='utf-8'))
+                data['settings']['mode']=old
+                path.write_text(json.dumps(data),encoding='utf-8')
+                self.assertEqual(Settings.load(path),original)
+                Settings.load(path).save(path)
+                self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['settings']['mode'],new)
             path.write_text('{"schema":999}')
             with self.assertRaises(ValueError):Settings.load(path)
 
     def test_improved_search_valid_deterministic_and_improves_start(self):
         im=Image.new('RGB',(48,128),(100,150,190));s=Settings(search='Improved weighted')
-        codes,score=optimize(im,s)
-        self.assertEqual(optimize(im,s)[0],codes)
+        codes,score=optimize_legacy(im,s)
+        self.assertEqual(optimize_legacy(im,s)[0],codes)
         self.assertTrue(all(c in CODES for c in codes))
         self.assertLessEqual(score,float(_weighted_error(im,hardware_palette(s.codes))))
 
@@ -65,7 +74,7 @@ class ConversionTests(unittest.TestCase):
         with self.assertRaises(Cancelled):quantize(self.image,hardware_palette(Settings().codes),'Floyd–Steinberg',cancel=cancel)
 
     def test_legacy_search_exact_representable_color(self):
-        codes,score=optimize(Image.new('RGB',(48,128),'black'),Settings(search='Legacy exhaustive'))
+        codes,score=optimize_legacy(Image.new('RGB',(48,128),'black'),Settings(search='Legacy exhaustive'))
         self.assertEqual(score,0)
         self.assertEqual(codes[3],'00')
 

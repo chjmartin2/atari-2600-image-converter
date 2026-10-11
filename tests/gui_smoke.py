@@ -7,6 +7,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from chrono.gui import App,sample_image
 from chrono.core import PRESETS,Settings
 
+preferences_temp=tempfile.TemporaryDirectory()
+preferences_patch=patch('chrono.preferences.preferences_path',return_value=Path(preferences_temp.name)/'preferences.json')
+preferences_patch.start()
 app=App()
 errors=[]
 app.report_callback_exception=lambda *args:errors.append(str(args))
@@ -18,15 +21,41 @@ def wait():
     app.update()
 try:
     wait()
-    assert app.vars['search'].get()=='Improved weighted'
+    assert '8 color mode — Flicker' in app.combos['mode']['values']
+    assert '8 color per line mode — Flicker' in app.combos['mode']['values']
+    assert app.vars['optimization_scope'].get()=='Colors only'
+    assert app.vars['search'].get()=='Weighted eight-color'
+    assert app.vars['search_effort'].get()=='Thorough'
+    app.vars['search_effort'].set('Standard')
+    app.vars['optimization_scope'].set('Image + colors')
+    app.reset_all_options();wait()
+    assert app.vars['optimization_scope'].get()=='Colors only'
+    assert app.vars['search_effort'].get()=='Thorough'
     assert app.vars['background'].get()=='Black'
+    assert app.vars['brightness_trim'].get()==1.0
+    app.vars['brightness_trim'].set(.75);wait()
+    assert app.result[2].brightness_trim==.75
+    app.reset_adjustments();wait()
+    assert app.vars['brightness_trim'].get()==1.0
     for width,height in ((1000,700),(1320,850)):
         app.geometry(f'{width}x{height}');app.update()
+        assert app.brightness_controls.winfo_ismapped()
+        assert app.brightness_controls.winfo_rooty()+app.brightness_controls.winfo_height() <= app.winfo_rooty()+app.winfo_height()
+        background=app.combos['background']
+        assert background.winfo_ismapped(), 'Background choice must be visible without opening Advanced search'
+        assert tuple(background.cget('values'))==('Black','Black or white','Any Atari color')
+        assert background.winfo_rooty()>=app.winfo_rooty()
+        assert background.winfo_rooty()+background.winfo_height()<=app.winfo_rooty()+app.winfo_height()
+        assert str(background.cget('state'))=='readonly'
         for child in app.winfo_children():
             if hasattr(child,'winfo_children'):
                 for button in child.winfo_children():
                     if getattr(button,'cget',None) and button.winfo_class()=='TButton' and 'Export ASM' in button.cget('text'):
                         assert button.winfo_rooty()+button.winfo_height()<=app.winfo_rooty()+app.winfo_height(),'Export controls fall below window'
+    for choice in ('Black or white','Any Atari color','Black'):
+        app.combos['background'].set(choice)
+        app.combos['background'].event_generate('<<ComboboxSelected>>');wait()
+        assert app.read_settings().background==choice
     with tempfile.TemporaryDirectory() as temp:
         temp=Path(temp)
         sample_image().save(temp/'input.png');app.open_image(temp/'input.png');wait()
@@ -49,13 +78,24 @@ try:
             app.vars['preset'].set(name);app.preset_changed();wait()
         app.vars['brightness'].set(.85);wait()
         app.vars['dither'].set('Ordered 4×4');app.changed();wait()
-        app.vars['search'].set('Improved weighted')
+        app.vars['search'].set('Weighted eight-color')
         app.convert(True);wait()
         app.vars['optimization_scope'].set('Image only');app.start_optimization();wait()
         from chrono.core import prepare
         import numpy as np
         np.testing.assert_array_equal(app.result[0],prepare(app.source,app.result[2]))
         assert app.before_result is not None
+        app.vars['optimization_scope'].set('Image + colors')
+        app.start_optimization();wait()
+        assert app.result[2].search=='Weighted eight-color'
+        fitted=app.result[2]
+        for name in ('red_offset','green_offset','blue_offset'):
+            assert getattr(app.read_settings(),name)==getattr(fitted,name)
+        app.vars['brightness_trim'].set(.8);wait()
+        for name in ('red_offset','green_offset','blue_offset'):
+            assert getattr(app.read_settings(),name)==getattr(fitted,name)
+        app.reset_adjustments();wait()
+        assert all(getattr(app.read_settings(),name)==0 for name in ('red_offset','green_offset','blue_offset'))
         frozen=app.result[0].copy();frozen_indices=app.result[1].copy()
         app.compare_before.set(True);app.show_result();app.compare_before.set(False);app.show_result()
         np.testing.assert_array_equal(frozen,app.result[0]);np.testing.assert_array_equal(frozen_indices,app.result[1])
@@ -98,6 +138,25 @@ try:
         animation.close();app.update();assert animation.job is None and animation.resize_job is None
         app.show_animated_preview();app.update();assert app.animated_preview is not animation
         app.animated_preview.close();app.update()
+        # Whole display-pixel blocks even when smooth display was enabled.
+        from PIL import ImageTk
+        saved_indices=app.result[1].copy();saved_settings=app.result[2]
+        app.zoom.set('Pixel-perfect fit');app.smooth.set(True)
+        for width,height in ((1000,700),(1320,850)):
+            app.geometry(f'{width}x{height}');app.update();app.show_result();app.update()
+            assert str(app.smooth_check.cget('state'))=='disabled'
+            assert app.smooth_check.winfo_rootx()+app.smooth_check.winfo_width()<=app.winfo_rootx()+app.winfo_width()
+            for preview in (app.input_preview,app.output_preview):
+                iw,ih=preview.image.size;dw,dh=preview.drawn_size
+                assert dw%iw==0 and dh%ih==0
+                sx,sy=dw//iw,dh//ih
+                assert sx==2*sy
+                expected=np.repeat(np.repeat(np.asarray(preview.image.convert('RGB')),sy,axis=0),sx,axis=1)
+                np.testing.assert_array_equal(np.asarray(ImageTk.getimage(preview.photo).convert('RGB')),expected)
+        np.testing.assert_array_equal(app.result[1],saved_indices)
+        assert app.result[2]==saved_settings
+        app.zoom.set('Fit');app.show_result();app.update()
+        assert str(app.smooth_check.cget('state'))=='normal' and app.smooth.get()
         for view in ('Temporal blend','Quantization targets','Frame 1','Frame 2','Frame 3'):
             app.view.set(view);app.zoom.set('200%');app.smooth.set(True);app.show_result();app.update()
         app.export_to(temp/'export')
@@ -127,4 +186,7 @@ try:
         assert app.vars['background'].get()=='Any Atari color'
         assert not errors,errors
         print('GUI smoke passed: visible input fitting, explicit scopes, comparison, swatch picker apply/cancel, layout, import, animation, crop, export, settings')
-finally:app.close()
+finally:
+    app.close()
+    preferences_patch.stop()
+    preferences_temp.cleanup()

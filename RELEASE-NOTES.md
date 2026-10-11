@@ -1,3 +1,43 @@
+# Atari 2600 Image Optimizer 0.6.0 — October 11, 2026
+
+- Adds 128×200 BUS Single Color and Color per Line modes, bringing the total to 22 display modes. BUS row search accounts for the selected dithering and the display's half-duty brightness; paired-row variety and random row colors are available.
+- Renames the flexible three-frame modes to **8 color mode** and **8 color per line mode**. Existing saved settings migrate automatically; Classic retains its original RGB components.
+- Adds 48×192 alongside 48×128 for Two Color, the 8 color modes and static Scanline Color.
+- Adds independent row backgrounds to 8 color per line mode, including black borders around the active picture. Changing-background cartridges use driver-free 64 KB EF output.
+- Static Scanline Color can fit both colors per row. Its dither-aware search tests all 8,256 unordered pairs, carries the winning row's diffusion error forward, and exports driver-free F6 cartridges.
+- Reworks 8 color palette fitting around a weighted eight-color target and prebuilt mixed-color tables. Colors only is the default; Image only and Image + colors remain separate choices. Two Color uses a simpler, faster palette fit.
+- Classic now searches brightness only when Optimize is clicked. Adds a universal brightness trim, pixel-perfect preview, remembered input/export folders, and a compact Atari-shaped activity indicator.
+
+## Downloads
+
+The Windows x64 ZIP is a portable application: extract the whole folder and run
+the EXE. Python is included. The Source ZIP includes Python code, the Windows
+launcher, prebuilt palette tables and cartridge templates. Python 3.12+ is needed
+for source use; no separate assembler is needed for normal cartridge export.
+
+The Demo Carts ZIP contains all 11 supplied BIN examples unchanged. Each BIN is
+also attached separately for direct download. They were exported at different
+stages of development, so older examples need not include the latest border fix.
+The two supplied BUS demos include their required BUS2 runtime; provenance is
+recorded in Demo Output/README.md. Optional drivers remain excluded from the
+application and Python source packages and are fetched using the support setup.
+
+## Verification and limits
+
+The latest implementation passed 196 automated tests, GUI checks, DASM/export
+parity, and standalone smoke checks across all 22 modes. Stella pixel and timing
+checks cover both heights of the new per-row-background kernel, including black
+borders and all three phases at 262 NTSC scanlines. Release packages receive
+separate extraction and startup checks. These checks do not establish physical
+Atari, Harmony or MovieCart compatibility. Temporal modes still flicker, and the
+rendering model is an estimate. BUS and television interlace remain experimental.
+The Windows application is unsigned.
+
+Original contributors and technique/driver provenance remain credited in
+CREDITS.md, RESEARCH.md, ADVANCED-MODES.md and BUS-RESEARCH.md.
+
+---
+
 # Atari 2600 Image Optimizer 0.5.1 — October 10, 2026
 
 - Adds the approved silver-and-color-pixel logo to the workbench and GitHub README.
